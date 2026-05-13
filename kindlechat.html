@@ -1408,7 +1408,8 @@
         // general channel so child_added can dedupe across initial-load,
         // pagination, and live updates. Reset whenever the room changes.
         var renderedKindlechatIds = {};
-        var kcDeleteHandler = null;       // bare-ref child_removed handler ref
+        var generalDomMsgCount = 0;       // Counter replacing querySelectorAll('.msg') in kcAddedHandler
+        var kcDeleteHandler = null;       // child_removed handler ref (on generalListener query)
         var kcChangedHandler = null;      // limitToLast(child_changed) handler ref
         var kcAddedHandler = null;        // limitToLast(child_added) handler ref
         var rulesListenerRef = null;      // accepted_rules listener for cleanup
@@ -2398,6 +2399,7 @@
                     for (var i = batch.length - 1; i >= 0; i--) {
                         renderedKindlechatIds[batch[i].id] = true;
                         renderMessage(batch[i].data, batch[i].id, true);
+                        generalDomMsgCount++;
                     }
 
                     if (noMoreGeneralMessages) {
@@ -2483,21 +2485,15 @@
             // Cleanup previous listeners
             if (unsubscribeMsg) unsubscribeMsg();
             if (generalListener) {
-                // Detaches all callbacks on this limitToLast(50) query
-                // (covers kcAddedHandler and kcChangedHandler).
+                // Detaches all callbacks on this query (child_added, child_changed, child_removed).
                 generalListener.off();
                 generalListener = null;
             }
-            // The bare-ref child_removed listener lives on a different query
-            // and must be detached by exact (event, handler) pair so it doesn't
-            // also kill the lastMessage timestamp listener on the same path.
-            if (kcDeleteHandler) {
-                generalChatRef.off('child_removed', kcDeleteHandler);
-                kcDeleteHandler = null;
-            }
             kcAddedHandler = null;
             kcChangedHandler = null;
+            kcDeleteHandler = null;
             renderedKindlechatIds = {};
+            generalDomMsgCount = 0;
             // Reset Pixel Cache on reload
             window.pixelGridCache = {};
 
@@ -2648,6 +2644,7 @@
 
                         if (data.user) recentGeneralMsgUsers.push(data.user);
                         renderMessage(data, msgId);
+                        generalDomMsgCount++;
                     });
 
                     if (recentGeneralMsgUsers.length > GENERAL_MSG_WINDOW) {
@@ -2692,21 +2689,21 @@
                     // Smart auto-scroll: only follow if user was already near bottom
                     var nearBottom = (history.scrollHeight - history.clientHeight) - history.scrollTop < 100;
                     renderMessage(data, msgId);
+                    generalDomMsgCount++;
                     if (nearBottom) history.scrollTop = history.scrollHeight;
 
                     // Trim DOM to prevent unbounded growth over long sessions.
-                    // Keeps the most recent 80 messages; older ones are still
-                    // reachable via scroll-up pagination.
+                    // Uses a counter instead of querySelectorAll to avoid DOM scans on Kindle.
                     var MAX_GENERAL_DOM_MSGS = 80;
-                    var domMsgs = history.querySelectorAll('.msg');
-                    if (domMsgs.length > MAX_GENERAL_DOM_MSGS) {
-                        var toRemove = domMsgs.length - MAX_GENERAL_DOM_MSGS;
+                    if (generalDomMsgCount > MAX_GENERAL_DOM_MSGS) {
+                        var toRemove = generalDomMsgCount - MAX_GENERAL_DOM_MSGS;
                         for (var ri = 0; ri < toRemove; ri++) {
                             var oldestEl = history.querySelector('.msg');
                             if (!oldestEl) break;
                             var oldId = oldestEl.dataset.msgId;
                             if (oldId) delete renderedKindlechatIds[oldId];
                             history.removeChild(oldestEl);
+                            generalDomMsgCount--;
                         }
                         // Reset pagination anchor to the new oldest visible message so
                         // scroll-up correctly loads the messages we just trimmed.
@@ -2735,7 +2732,13 @@
                     var msgEl = history.querySelector('.msg[data-msg-id="' + childSnap.key + '"]');
                     if (msgEl && msgEl.parentNode) msgEl.parentNode.removeChild(msgEl);
                 };
-                generalChatRef.on('child_removed', kcDeleteHandler);
+                // child_removed on the scoped query — NOT the bare ref.
+                // A bare-ref listener would force Firebase to sync the entire
+                // kindlechat/messages tree (~5 MB). Window-slide events (a 51st
+                // message pushing the oldest out of the live window) will also
+                // fire here, but those messages are already falling off the
+                // visible window so removing them from the DOM is correct.
+                generalListener.on('child_removed', kcDeleteHandler);
             })['catch'](function (error) {
                 var titleEl = document.querySelector('.title-text');
                 if (titleEl) titleEl.innerText = 'KindleChat';
@@ -2848,6 +2851,19 @@
         }
 
         // --- USERNAME → PROFILE CACHE ---
+        function _seedUidCacheFromUsernameCache() {
+            // Populate _authorCache and mark _pendingUidFetches resolved so that
+            // resolveMessageAuthor never fires individual RTDB queries for users
+            // already covered by the bulk fetch.
+            for (var _n in usernameToProfile) {
+                var _p = usernameToProfile[_n];
+                if (_p && _p.uid && !_authorCache[_p.uid]) {
+                    _authorCache[_p.uid] = { avatarSeed: _p.avatarSeed };
+                    _pendingUidFetches[_p.uid] = true;
+                }
+            }
+        }
+
         function buildUsernameCache() {
             var CACHE_KEY = 'rkUsernameCacheV1';
             var CACHE_TTL = 10 * 60 * 1000; // 10 minutes
@@ -2857,6 +2873,7 @@
                     var parsed = JSON.parse(cached);
                     if (Date.now() < parsed.expiry) {
                         usernameToProfile = parsed.data;
+                        _seedUidCacheFromUsernameCache();
                         return;
                     }
                 }
@@ -2882,6 +2899,7 @@
                         };
                     }
                 }
+                _seedUidCacheFromUsernameCache();
                 try {
                     sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data: usernameToProfile, expiry: Date.now() + CACHE_TTL }));
                 } catch (e) {}
@@ -4269,10 +4287,6 @@
                 if (unsubscribeRooms) { unsubscribeRooms(); unsubscribeRooms = null; }
                 if (unsubscribeGeneral) { unsubscribeGeneral(); unsubscribeGeneral = null; }
                 if (generalListener) { generalListener.off(); generalListener = null; }
-                if (kcDeleteHandler) {
-                    generalChatRef.off('child_removed', kcDeleteHandler);
-                    kcDeleteHandler = null;
-                }
                 if (rulesListenerRef) { rulesListenerRef.off(); rulesListenerRef = null; }
                 kcAddedHandler = null;
                 kcChangedHandler = null;
