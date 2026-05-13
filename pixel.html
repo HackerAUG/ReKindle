@@ -909,13 +909,13 @@
             // 2. SAFETY CHECK (If chat is empty, let them send)
             if (!chatHistory || chatHistory.length === 0) return true;
 
-            // 3. CALCULATE SCORE
+            // 3. CALCULATE SCORE — only pixel art posts count (not text messages)
             // Assumes chatHistory[0] is the MOST RECENT message
             const limit = Math.min(chatHistory.length, SCAN_DEPTH);
 
             for (let i = 0; i < limit; i++) {
-                // Only count messages from this specific user
-                if (chatHistory[i].userId === currentUserId) {
+                // Only count pixel art posts from this specific user
+                if (chatHistory[i].userId === currentUserId && chatHistory[i].isPixelArt) {
 
                     // Calculate weight: 1.0, 0.95, 0.90, etc.
                     let weight = 1.0 - (i * DECAY_RATE);
@@ -927,7 +927,7 @@
                 }
             }
 
-            console.log(`User Score: ${score.toFixed(2)} / ${MAX_SCORE}`);
+            console.log(`Pixel Score: ${score.toFixed(2)} / ${MAX_SCORE}`);
 
             // 4. VERDICT
             return score < MAX_SCORE;
@@ -936,9 +936,20 @@
         async function checkUserTimeout() {
             if (!currentUser) return null;
             try {
-                const timeoutRef = rtdb.ref('social_timeouts/' + currentUser.uid);
-                const snap = await timeoutRef.once('value');
-                return snap.val();
+                const snap = await rtdb.ref('social_timeouts/' + currentUser.uid).once('value');
+                const data = snap.val();
+                if (!data || !data.reason || !data.durationHours) return null;
+
+                const seenSnap = await rtdb.ref('users_private/' + currentUser.uid + '/timeout_seen').once('value');
+                const seenAt = seenSnap.val();
+                if (!seenAt) return data; // First time seeing it — still active
+
+                const offsetSnap = await rtdb.ref('.info/serverTimeOffset').once('value');
+                const offset = offsetSnap.val() || 0;
+                const serverNow = Date.now() + offset;
+                const expiresAt = seenAt + (data.durationHours * 60 * 60 * 1000);
+
+                return serverNow < expiresAt ? data : null;
             } catch (e) {
                 console.error('Error checking timeout:', e);
                 return null;
@@ -971,7 +982,7 @@
                 snapshot.forEach(child => {
                     const val = child.val();
                     if (val.user) {
-                        history.push({ userId: val.user });
+                        history.push({ userId: val.user, isPixelArt: !!val.is_pixel_art });
                     }
                 });
                 history.reverse(); // Newest first

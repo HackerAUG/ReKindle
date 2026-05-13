@@ -3057,7 +3057,7 @@
                 nameHtml = isSelf ? '<span class="author-name-field" onclick="openUserProfile(\'' + safeUid + '\', \'' + safeUser + '\')">' + devBadge + crown + window.t('kindlechat.msg.you', 'You') + '</span>' : '<span class="author-name-field" onclick="openUserProfile(\'' + safeUid + '\', \'' + safeUser + '\')">' + devBadge + crown + '<span style="font-weight:bold;">Ukiyo</span></span>';
             } else if (supporterUsers[msg.user] || msg.isPro) {
                 // Supporter Crown (SVG for Kindle compatibility)
-                var crownSvg = '<svg class="supporter-crown" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M2 4L5 18H19L22 4L15 11L12 4L9 11L2 4Z" stroke="currentColor" stroke-width="2" fill="none"/></svg>';
+                var crownSvg = '<svg class="supporter-crown" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M2 4L5 18H19L22 4L15 11L12 4L9 11L2 4Z" stroke="black" stroke-width="2" fill="none"/></svg>';
                 var crown = '<a href="http://link.rekindle.ink/donate" target="_blank" style="text-decoration:none;" title="Supporter">' + crownSvg + '</a>';
                 nameHtml = isSelf ? '<span class="author-name-field" onclick="openUserProfile(\'' + safeUid + '\', \'' + safeUser + '\')">' + crown + window.t('kindlechat.msg.you', 'You') + '</span>' : '<span class="author-name-field" onclick="openUserProfile(\'' + safeUid + '\', \'' + safeUser + '\')">' + crown + '<span style="font-weight:bold;">' + safeUser + '</span></span>';
             }
@@ -4096,11 +4096,16 @@
                             newSupporters[data.usernames[i]] = true;
                         }
                     } else {
-                        // Map format: keys are usernames
+                        // Map format: keys are emails or usernames
                         for (var key in data) {
                             if (key !== 'usernames' && key !== 'list') {
                                 if (isValidPro(data[key])) {
                                     newSupporters[key] = true;
+                                    // Also index by the username portion of an email key
+                                    var atIdx = key.indexOf('@');
+                                    if (atIdx > 0) {
+                                        newSupporters[key.substring(0, atIdx)] = true;
+                                    }
                                 }
                             }
                         }
@@ -4140,7 +4145,7 @@
                         // Also update Name to include crown if missing
                         var nameMeta = msgEl.querySelector('.msg-meta span:first-child');
                         if (nameMeta && !nameMeta.querySelector('.supporter-crown')) {
-                            var crownSvg = '<svg class="supporter-crown" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M2 4L5 18H19L22 4L15 11L12 4L9 11L2 4Z" stroke="currentColor" stroke-width="2" fill="none"/></svg>';
+                            var crownSvg = '<svg class="supporter-crown" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M2 4L5 18H19L22 4L15 11L12 4L9 11L2 4Z" stroke="black" stroke-width="2" fill="none"/></svg>';
                             var crown = '<a href="http://link.rekindle.ink/donate" target="_blank" style="text-decoration:none;" title="Supporter">' + crownSvg + '</a>';
                             var isSelf = currentUser && (user === currentUsername);
                             nameMeta.innerHTML = crown + (isSelf ? window.t('kindlechat.msg.you', 'You') : user);

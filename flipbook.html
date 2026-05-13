@@ -1431,9 +1431,20 @@
         async function checkUserTimeout() {
             if (!currentUser) return null;
             try {
-                const timeoutRef = rtdb.ref('social_timeouts/' + currentUser.uid);
-                const snap = await timeoutRef.once('value');
-                return snap.val();
+                const snap = await rtdb.ref('social_timeouts/' + currentUser.uid).once('value');
+                const data = snap.val();
+                if (!data || !data.reason || !data.durationHours) return null;
+
+                const seenSnap = await rtdb.ref('users_private/' + currentUser.uid + '/timeout_seen').once('value');
+                const seenAt = seenSnap.val();
+                if (!seenAt) return data; // First time seeing it — still active
+
+                const offsetSnap = await rtdb.ref('.info/serverTimeOffset').once('value');
+                const offset = offsetSnap.val() || 0;
+                const serverNow = Date.now() + offset;
+                const expiresAt = seenAt + (data.durationHours * 60 * 60 * 1000);
+
+                return serverNow < expiresAt ? data : null;
             } catch (e) {
                 console.error('Error checking timeout:', e);
                 return null;
