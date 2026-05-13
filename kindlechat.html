@@ -736,7 +736,6 @@
             flex-direction: column;
             padding: 0;
             /* Remove padding from main container */
-            gap: 0;
             overflow: hidden;
             /* Inner containers handle scroll */
         }
@@ -803,7 +802,6 @@
             padding: 10px;
             display: flex;
             flex-direction: column;
-            /* gap: 15px;  <-- Kindle doesn't support flex gap */
         }
 
         /* CATEGORY SECTION */
@@ -855,7 +853,6 @@
             z-index: 10;
             display: none;
             flex-direction: row;
-            /* gap: 5px; REMOVED KINDLE */
         }
 
         #reaction-selection-modal>*+* {
@@ -1068,7 +1065,7 @@
 
     <script src="bad_words.js?v=4"></script>
     <script src="time.js"></script>
-    <script src="theme.js?v=16"></script>
+    <script src="theme.js?v=17"></script>
     <script src="js/i18n.js"></script>
     <script src="social-timeout.js"></script>
 </head>
@@ -1082,6 +1079,10 @@
             <button class="sys-btn" onclick="markAllAsRead()" style="position:absolute; left: 45px; z-index:2; height: 18px; line-height:1; font-size:0.7rem; padding: 0 5px;" data-i18n="kindlechat.btn.mark_read" title="Mark All As Read">Mark Read</button>
             <span class="title-text" data-i18n="kindlechat.title">KindleChat</span>
             <div class="title-controls">
+                <label id="mod-toggle-label" style="display:none; font-size:0.75rem; cursor:pointer; background:white; border:2px solid black; padding:2px 5px; font-weight:bold; margin-right:5px; align-items:center;">
+                    <input type="checkbox" id="mod-mode-check" onchange="toggleModeratorMode(this.checked)" style="margin-right:4px;">
+                    Mod Mode
+                </label>
                 <button class="sys-btn" onclick="openRulesModal()"
                     style="padding:0 5px; margin-right:5px; height:22px; font-size:0.7rem;"
                     data-i18n="kindlechat.btn.rules">Rules</button>
@@ -1522,6 +1523,8 @@
             showTranslations: true, // Default to true for all users to see translations
             showAdminTools: false
         };
+        var isCurrentUserMod = false;
+        var isModeratorMode = false;
 
         // --- SPAM PROTECTION FOR GENERAL CHANNEL ---
         var GENERAL_MSG_WINDOW = 50; // Check last 50 messages
@@ -1550,6 +1553,15 @@
                     checkSocialTimeout(rtdb, user.uid, function () {
                     currentUser = user;
                     currentUsername = (user.email || user.uid).split('@')[0];
+
+                    // Check moderator status
+                    rtdb.ref('moderators/' + user.uid).once('value').then(function(modSnap) {
+                        isCurrentUserMod = modSnap.val() === true;
+                        if (isCurrentUserMod) {
+                            var toggler = document.getElementById('mod-toggle-label');
+                            if (toggler) toggler.style.display = 'flex';
+                        }
+                    });
 
                     // Check Rules Acceptance
                     if (rulesListenerRef) rulesListenerRef.off();
@@ -3059,6 +3071,7 @@
 
             // ADMIN CONTROLS (Delete + Reprocess)
             var adminControlsHtml = '';
+            var modControlsHtml = '';
             if (currentUser && currentUsername === 'ukiyo') {
                 if (settings.showAdminTools) {
                     // Escape single quotes in text for the function call
@@ -3069,14 +3082,16 @@
                         adminControlsHtml += '<div class="del-btn" style="color: blue; border-color: blue;" onclick="reprocessMessage(\'' + msgId + '\', \'' + safeText + '\')" title="Reprocess Translation">Rp</div>';
                     }
 
-                    // Delete Button (Shifted further left if reprocess is present)
-                    // Actually, let's stack them or put them side by side? 
-                    // To keep it simple, let's use the existing absolute positioning logic but offset them.
-                    // The CSS below defines .del-btn. Let's make a specific class or inline style overrides.
-
                     // Standard Delete Button
                     adminControlsHtml += '<div class="del-btn" onclick="deleteGeneralMessage(\'' + msgId + '\')">✕</div>';
                 }
+            } else if (currentUser && isCurrentUserMod && isModeratorMode && currentRoomId === 'general') {
+                var timeoutUid = (msg.uid || '').replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+                var timeoutName = (msg.user || 'this user').replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+                if (timeoutUid && timeoutUid !== currentUser.uid) {
+                    modControlsHtml += '<button style="background:black;color:white;border:none;padding:1px 6px;font-size:0.7rem;cursor:pointer;font-family:inherit;margin-left:4px;" onclick="timeOutUser(\'' + timeoutUid + '\', \'' + timeoutName + '\')">Timeout</button>';
+                }
+                modControlsHtml += '<button style="background:black;color:white;border:none;padding:1px 6px;font-size:0.7rem;cursor:pointer;font-family:inherit;margin-left:4px;" onclick="deleteGeneralMessage(\'' + msgId + '\')">Delete</button>';
             }
 
             var bubbleContent = '';
@@ -3227,7 +3242,7 @@
             // TRANSLATION BUTTON (Client-side fallback) - REMOVED for special messages
             var transBtnHtml = (isSpecialMessage || msg.is_pixel_art) ? '' : toggleBtnHtml;
 
-            div.innerHTML = '<div class="msg-meta">' + nameHtml + '<span>' + timeStr + '</span>' + transBtnHtml + '</div>' +
+            div.innerHTML = '<div class="msg-meta">' + nameHtml + '<span>' + timeStr + '</span>' + transBtnHtml + modControlsHtml + '</div>' +
                 '<div class="msg-row">' +
                 '<canvas id="' + avatarId + '" class="msg-avatar" width="32" height="32" onclick="openUserProfile(\'' + safeUid + '\', \'' + safeUser + '\')"></canvas>' +
                 '<div style="display:flex; align-items:center; min-width: 0;">' +
@@ -3470,12 +3485,232 @@
             });
         }
 
+        function toggleModeratorMode(enabled) {
+            isModeratorMode = enabled;
+            rerenderVisibleGeneralMessages();
+        }
+
+        function rerenderVisibleGeneralMessages() {
+            if (currentRoomId !== 'general') return;
+
+            var history = document.getElementById('chat-history');
+            if (!history) return;
+
+            var msgEls = history.querySelectorAll('.msg[data-msg-id]');
+            for (var i = 0; i < msgEls.length; i++) {
+                (function (msgId) {
+                    generalChatRef.child(msgId).once('value').then(function (snap) {
+                        if (currentRoomId !== 'general') return;
+                        if (!snap.exists()) return;
+                        renderMessage(snap.val(), msgId);
+                    });
+                })(msgEls[i].getAttribute('data-msg-id'));
+            }
+        }
+
+        function timeOutUser(uid, name) {
+            if (!currentUser || !isCurrentUserMod || !isModeratorMode || !uid || uid === currentUser.uid) return;
+
+            showTimeoutModal(uid, name || "this user");
+        }
+
+        function showTimeoutModal(uid, name) {
+            var existing = document.getElementById('moderator-timeout-overlay');
+            if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+            var overlay = document.createElement('div');
+            overlay.id = 'moderator-timeout-overlay';
+            overlay.className = 'modal-overlay';
+            overlay.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.95); z-index:10000; display:flex; align-items:center; justify-content:center; font-family:Verdana, Geneva, sans-serif;';
+
+            var box = document.createElement('div');
+            box.className = 'modal-box';
+            box.style.cssText = 'background:white; border:2px solid black; box-shadow:4px 4px 0 black; width:85%; max-width:360px;';
+
+            var title = document.createElement('div');
+            title.style.cssText = 'border-bottom:2px solid black; padding:8px; font-weight:bold; text-align:center;';
+            title.textContent = 'Time Out User';
+
+            var body = document.createElement('div');
+            body.style.cssText = 'padding:15px;';
+
+            var target = document.createElement('div');
+            target.style.cssText = 'font-size:0.85rem; margin-bottom:10px;';
+            target.textContent = 'Target: ' + name;
+
+            var hoursLabel = document.createElement('label');
+            hoursLabel.style.cssText = 'display:block; font-weight:bold; font-size:0.8rem; margin-bottom:4px;';
+            hoursLabel.textContent = 'Hours (max 24)';
+            var hoursInput = document.createElement('input');
+            hoursInput.type = 'number';
+            hoursInput.min = '0.25';
+            hoursInput.max = '24';
+            hoursInput.step = '0.25';
+            hoursInput.value = '1';
+            hoursInput.style.cssText = 'box-sizing:border-box; width:100%; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; margin-bottom:10px;';
+
+            var reasonLabel = document.createElement('label');
+            reasonLabel.style.cssText = 'display:block; font-weight:bold; font-size:0.8rem; margin-bottom:4px;';
+            reasonLabel.textContent = 'Reason';
+            var reasonInput = document.createElement('textarea');
+            reasonInput.maxLength = 200;
+            reasonInput.style.cssText = 'box-sizing:border-box; width:100%; min-height:70px; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; resize:none; margin-bottom:12px;';
+
+            var errorEl = document.createElement('div');
+            errorEl.style.cssText = 'min-height:16px; color:red; font-size:0.8rem; margin-bottom:8px;';
+
+            var btnRow = document.createElement('div');
+            btnRow.style.cssText = 'text-align:right;';
+            var cancelBtn = document.createElement('button');
+            cancelBtn.className = 'modal-btn';
+            cancelBtn.style.marginRight = '8px';
+            cancelBtn.textContent = 'Cancel';
+            var okBtn = document.createElement('button');
+            okBtn.className = 'modal-btn';
+            okBtn.textContent = 'Time Out';
+
+            cancelBtn.onclick = function () { overlay.parentNode.removeChild(overlay); };
+            okBtn.onclick = function () {
+                var hours = parseFloat(hoursInput.value);
+                var reason = reasonInput.value.replace(/^\s+|\s+$/g, '');
+                if (isNaN(hours) || hours <= 0 || hours > 24) {
+                    errorEl.textContent = "Timeout length must be more than 0 and no more than 24 hours.";
+                    return;
+                }
+                if (!reason) {
+                    errorEl.textContent = "A reason is required.";
+                    return;
+                }
+                overlay.parentNode.removeChild(overlay);
+                applyTimeout(uid, name, hours, reason);
+            };
+
+            btnRow.appendChild(cancelBtn);
+            btnRow.appendChild(okBtn);
+            body.appendChild(target);
+            body.appendChild(hoursLabel);
+            body.appendChild(hoursInput);
+            body.appendChild(reasonLabel);
+            body.appendChild(reasonInput);
+            body.appendChild(errorEl);
+            body.appendChild(btnRow);
+            box.appendChild(title);
+            box.appendChild(body);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            reasonInput.focus();
+        }
+
+        function applyTimeout(uid, name, hours, reason) {
+            showConfirmModal("Time out " + (name || "this user") + " for " + hours + " hour(s)?", function () {
+                var logKey = rtdb.ref('mod_actions').push().key;
+                var updates = {};
+                updates['social_timeouts/' + uid] = {
+                    reason: reason,
+                    durationHours: hours,
+                    moderatedBy: currentUser.uid,
+                    createdAt: firebase.database.ServerValue.TIMESTAMP
+                };
+                updates['users_private/' + uid + '/timeout_seen'] = null;
+                updates['mod_actions/' + logKey] = {
+                    type: 'timeout',
+                    moderatorUid: currentUser.uid,
+                    moderatorName: currentUsername || currentUser.uid,
+                    targetUid: uid,
+                    targetName: name || uid,
+                    durationHours: hours,
+                    reason: reason,
+                    createdAt: firebase.database.ServerValue.TIMESTAMP,
+                    undone: false
+                };
+                rtdb.ref().update(updates)['catch'](function (e) {
+                    showModal("Timeout failed: " + e.message);
+                });
+            });
+        }
+
+        function showModDeleteModal(message, onConfirm) {
+            var existing = document.getElementById('mod-delete-overlay');
+            if (existing) existing.parentNode.removeChild(existing);
+            var overlay = document.createElement('div');
+            overlay.id = 'mod-delete-overlay';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.95);z-index:10000;display:flex;align-items:center;justify-content:center;font-family:Verdana,Geneva,sans-serif;';
+            var box = document.createElement('div');
+            box.style.cssText = 'background:white;border:2px solid black;box-shadow:4px 4px 0 black;width:85%;max-width:340px;';
+            var titleBar = document.createElement('div');
+            titleBar.style.cssText = 'border-bottom:2px solid black;padding:8px;font-weight:bold;text-align:center;font-size:0.85rem;';
+            titleBar.textContent = 'Confirm Delete';
+            var body = document.createElement('div');
+            body.style.cssText = 'padding:15px;';
+            var msg = document.createElement('div');
+            msg.style.cssText = 'font-size:0.85rem;margin-bottom:10px;';
+            msg.textContent = message;
+            var reasonLabel = document.createElement('label');
+            reasonLabel.style.cssText = 'display:block;font-weight:bold;font-size:0.8rem;margin-bottom:4px;';
+            reasonLabel.textContent = 'Reason (optional)';
+            var reasonInput = document.createElement('textarea');
+            reasonInput.maxLength = 200;
+            reasonInput.placeholder = 'e.g. spam, harassment…';
+            reasonInput.style.cssText = 'box-sizing:border-box;width:100%;min-height:60px;border:2px solid black;border-radius:0;padding:6px;font-family:inherit;font-size:0.8rem;resize:none;margin-bottom:12px;';
+            var btnRow = document.createElement('div');
+            btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
+            var cancelBtn = document.createElement('button');
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.style.cssText = 'font-family:inherit;font-size:0.8rem;border:2px solid black;background:white;padding:4px 12px;cursor:pointer;box-shadow:2px 2px 0 black;';
+            cancelBtn.onclick = function() { document.body.removeChild(overlay); };
+            var confirmBtn = document.createElement('button');
+            confirmBtn.textContent = 'Delete';
+            confirmBtn.style.cssText = 'font-family:inherit;font-size:0.8rem;border:2px solid black;background:black;color:white;padding:4px 12px;cursor:pointer;box-shadow:2px 2px 0 black;';
+            confirmBtn.onclick = function() {
+                var reason = reasonInput.value.trim();
+                document.body.removeChild(overlay);
+                onConfirm(reason);
+            };
+            btnRow.appendChild(cancelBtn);
+            btnRow.appendChild(confirmBtn);
+            body.appendChild(msg);
+            body.appendChild(reasonLabel);
+            body.appendChild(reasonInput);
+            body.appendChild(btnRow);
+            box.appendChild(titleBar);
+            box.appendChild(body);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            setTimeout(function() { reasonInput.focus(); }, 50);
+        }
+
         function deleteGeneralMessage(msgId) {
             if (!currentUser) return;
-            if (currentRoomId === 'general') {
+            if (currentRoomId !== 'general') return;
+            var isMod = isCurrentUserMod && isModeratorMode && currentUsername !== 'ukiyo';
+            if (isMod) {
+                showModDeleteModal("Permanently delete this message?", function(reason) {
+                    rtdb.ref('kindlechat/messages/' + msgId).once('value').then(function(snap) {
+                        var msgData = snap.val();
+                        if (!msgData) return;
+                        var logKey = rtdb.ref('mod_actions').push().key;
+                        var updates = {};
+                        updates['mod_actions/' + logKey] = {
+                            type: 'delete_chat_message',
+                            moderatorUid: currentUser.uid,
+                            moderatorName: currentUsername || currentUser.uid,
+                            targetUid: msgData.uid || '',
+                            targetName: msgData.user || '',
+                            reason: reason || '',
+                            createdAt: firebase.database.ServerValue.TIMESTAMP,
+                            savedPath: 'kindlechat/messages/' + msgId,
+                            savedData: msgData,
+                            undone: false
+                        };
+                        updates['kindlechat/messages/' + msgId] = null;
+                        rtdb.ref().update(updates)['catch'](function(e) {
+                            showModal("Delete failed: " + e.message);
+                        });
+                    });
+                });
+            } else {
                 showConfirmModal("Permanently delete this message?", function () {
-                    rtdb.ref('kindlechat/messages/' + msgId).remove()
-                    ['catch'](function (e) {
+                    rtdb.ref('kindlechat/messages/' + msgId).remove()['catch'](function (e) {
                         showModal("Delete failed: " + e.message);
                     });
                 });
@@ -3864,7 +4099,6 @@
             var currentIdx = allMsgs.findIndex(function (m) { return m.dataset.msgId === currentMsgId; });
 
             if (currentIdx <= 0) {
-                // alert("No previous messages found."); 
                 return;
             }
 

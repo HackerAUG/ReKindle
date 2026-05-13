@@ -585,6 +585,64 @@
     }
     window.rekindleApplyDefaultFullscreen = applyDefaultFullscreen;
 
+    // --- GLOBAL PRESENCE TRACKING ---
+    // Writes presence/{uid} = true while connected so live game listings can verify the host is online.
+    // The expensive full-node count listener is intentionally omitted.
+    window.rekindleInitGlobalPresence = function (db, uid) {
+        if (!db || !uid) return;
+        var presenceRef = db.ref('presence/' + uid);
+        window._rekindlePresenceRef = presenceRef;
+
+        var connectedRef = db.ref('.info/connected');
+
+        if (window._rekindlePresenceListener) {
+            connectedRef.off('value', window._rekindlePresenceListener);
+        }
+
+        window._rekindlePresenceListener = connectedRef.on('value', function (snap) {
+            if (snap.val() === true) {
+                presenceRef.onDisconnect().remove().then(function () {
+                    presenceRef.set(true);
+                }).catch(function () {});
+            }
+        });
+    };
+
+    function autoInitPresence() {
+        if (typeof firebase !== 'undefined' && firebase.apps && firebase.apps.length > 0) {
+            try {
+                var auth = firebase.auth();
+                var db = firebase.database();
+                if (auth && db) {
+                    if (window._rekindlePresenceInited) return true;
+                    window._rekindlePresenceInited = true;
+
+                    auth.onAuthStateChanged(function (user) {
+                        if (user && window.rekindleInitGlobalPresence) {
+                            window.rekindleInitGlobalPresence(db, user.uid);
+                        } else if (!user && window._rekindlePresenceRef) {
+                            window._rekindlePresenceRef.remove();
+                            window._rekindlePresenceRef.onDisconnect().cancel();
+                            window._rekindlePresenceRef = null;
+                        }
+                    });
+                    return true;
+                }
+            } catch (e) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    var presenceAttempts = 0;
+    var presenceTimer = setInterval(function () {
+        presenceAttempts++;
+        if (autoInitPresence() || presenceAttempts > 30) {
+            clearInterval(presenceTimer);
+        }
+    }, 1000);
+
     // --- CACHE MANAGEMENT ---
     function clearServiceWorkerCache() {
         if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {

@@ -377,9 +377,187 @@
         #main-ui > * + * {
             margin-top: 16px;
         }
+
+        .mod-actions-window {
+            background: white;
+            border: 2px solid black;
+            box-shadow: var(--shadow);
+            display: none;
+            flex-direction: column;
+            width: 100%;
+            max-width: 860px;
+            margin-top: 20px;
+            margin-bottom: 20px;
+        }
+
+        .mod-action-entry {
+            border: 1px solid #ccc;
+            padding: 10px 12px;
+            font-size: 11px;
+            font-family: "Courier New", monospace;
+            line-height: 1.6;
+        }
+
+        .mod-action-entry + .mod-action-entry {
+            border-top: none;
+        }
+
+        .mod-action-entry.undone-entry {
+            opacity: 0.5;
+        }
+
+        .mod-action-header {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 4px;
+        }
+
+        .mod-action-header > * + * {
+            margin-left: 10px;
+        }
+
+        .mod-action-time {
+            font-weight: bold;
+        }
+
+        .mod-action-preview {
+            color: #444;
+            font-style: italic;
+            margin-top: 2px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .badge-delete { background: #f8d7da; }
+        .badge-timeout-mod { background: #fff3cd; }
+        .badge-undone { background: #e2e3e5; text-decoration: line-through; }
+
+        .undo-btn {
+            font-family: "Geneva", "Verdana", sans-serif;
+            font-size: 10px;
+            padding: 1px 8px;
+            border: 2px solid black;
+            background: black;
+            color: white;
+            cursor: pointer;
+            box-shadow: 1px 1px 0 black;
+        }
+
+        .undo-btn:active {
+            box-shadow: none;
+            transform: translate(1px, 1px);
+        }
+
+        .undo-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .timeout-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            padding: 6px 10px;
+            border: 1px solid #ccc;
+            font-size: 11px;
+            font-family: "Courier New", monospace;
+        }
+
+        .timeout-row + .timeout-row {
+            border-top: none;
+        }
+
+        .timeout-row > * + * {
+            margin-left: 12px;
+        }
+
+        .timeout-user {
+            font-weight: bold;
+            min-width: 120px;
+        }
+
+        .timeout-remaining {
+            color: #8a4800;
+            font-weight: bold;
+            min-width: 100px;
+        }
+
+        .timeout-reason {
+            color: #555;
+            font-style: italic;
+            flex: 1;
+        }
+
+        .lift-btn {
+            font-family: "Geneva", "Verdana", sans-serif;
+            font-size: 10px;
+            padding: 1px 8px;
+            border: 2px solid black;
+            background: white;
+            cursor: pointer;
+            box-shadow: 1px 1px 0 black;
+            flex-shrink: 0;
+        }
+
+        .lift-btn:active {
+            box-shadow: none;
+            transform: translate(1px, 1px);
+        }
+
+        .clear-log-btn {
+            font-family: "Geneva", "Verdana", sans-serif;
+            font-size: 11px;
+            padding: 3px 8px;
+            border: 2px solid #c00;
+            background: white;
+            color: #c00;
+            cursor: pointer;
+            box-shadow: 1px 1px 0 #c00;
+            margin-left: auto;
+        }
+
+        .clear-log-btn:active {
+            box-shadow: none;
+            transform: translate(1px, 1px);
+        }
 </style>
 </head>
 <body>
+
+<div class="mod-actions-window" id="mod-actions-window">
+    <div class="title-bar">
+        <div class="title-bar-btn"></div>
+        <div class="title-bar-text">Moderator Actions</div>
+        <div class="title-bar-btn"></div>
+    </div>
+    <div class="content">
+        <div class="automod-controls">
+            <label for="mod-actions-limit">Show last:</label>
+            <select id="mod-actions-limit">
+                <option value="25">25 actions</option>
+                <option value="50" selected>50 actions</option>
+                <option value="100">100 actions</option>
+                <option value="200">200 actions</option>
+            </select>
+            <button class="btn-primary" onclick="fetchModActions()">Refresh</button>
+            <button class="clear-log-btn" onclick="clearModActionsLog()">Clear Log</button>
+        </div>
+
+        <div id="active-timeouts-section">
+            <div style="font-size:12px;font-weight:bold;margin-bottom:6px;">Active Timeouts</div>
+            <div id="active-timeouts-list"><div class="no-data">Loading...</div></div>
+        </div>
+
+        <hr class="divider">
+
+        <div>
+            <div style="font-size:12px;font-weight:bold;margin-bottom:6px;">Action Log</div>
+            <div class="status-bar" id="mod-actions-status">Loading...</div>
+            <div id="mod-actions-entries"><div class="no-data">Loading...</div></div>
+        </div>
+    </div>
+</div>
 
 <div class="window">
     <div class="title-bar">
@@ -505,7 +683,10 @@
         gate.style.display = 'none';
         mainUI.style.display = 'flex';
         document.getElementById('automod-window').style.display = 'flex';
+        document.getElementById('mod-actions-window').style.display = 'flex';
         fetchAutomodLog();
+        fetchModActions();
+        fetchActiveTimeouts();
     });
 
     function setStatus(msg) {
@@ -894,6 +1075,288 @@
     }
 
     var STRIKE_LIMIT = 3;
+
+    // ── Moderator Actions ─────────────────────────────────────────────────────
+
+    var ACTION_TYPE_LABELS = {
+        'delete_chat_message':        'Deleted Chat Msg',
+        'delete_topic_comment':       'Deleted Topic Comment',
+        'delete_neighbourhood_post':  'Deleted NB Post',
+        'delete_neighbourhood_comment': 'Deleted NB Comment',
+        'timeout':                    'Timeout'
+    };
+
+    function modActionBadge(type, undone) {
+        if (undone) return '<span class="badge badge-undone">UNDONE</span>';
+        if (type === 'timeout') return '<span class="badge badge-timeout-mod">TIMEOUT</span>';
+        return '<span class="badge badge-delete">DELETED</span>';
+    }
+
+    function contentPreview(entry) {
+        var lines = [];
+        if (entry.type === 'timeout') {
+            lines.push('Duration: ' + (entry.durationHours || '?') + 'h');
+            if (entry.reason) lines.push('Reason: ' + entry.reason);
+        } else if (entry.savedData) {
+            var d = entry.savedData;
+            var text = d.text || d.body || d.message || '';
+            if (text) lines.push(text.substring(0, 200) + (text.length > 200 ? '…' : ''));
+            if (entry.reason) lines.push('Reason: ' + entry.reason);
+        }
+        return lines.join('\n');
+    }
+
+    async function fetchModActions() {
+        var statusEl = document.getElementById('mod-actions-status');
+        var entriesEl = document.getElementById('mod-actions-entries');
+        statusEl.textContent = 'Loading moderator actions...';
+
+        var limit = parseInt(document.getElementById('mod-actions-limit').value, 10);
+
+        try {
+            var snap = await rtdb.ref('mod_actions').orderByKey().limitToLast(limit).once('value');
+            var data = snap.val() || {};
+            var keys = Object.keys(data).reverse(); // newest first
+
+            if (keys.length === 0) {
+                entriesEl.innerHTML = '<div class="no-data">No moderator actions recorded yet.</div>';
+                statusEl.textContent = 'No actions found.';
+                return;
+            }
+
+            // Resolve all uids in parallel
+            var allUids = new Set();
+            keys.forEach(function(k) {
+                var e = data[k];
+                if (e.moderatorUid) allUids.add(e.moderatorUid);
+                if (e.targetUid) allUids.add(e.targetUid);
+            });
+            await Promise.all(Array.from(allUids).map(function(uid) { return resolveUid(uid); }));
+
+            var undoneCount = 0;
+            var html = '';
+            keys.forEach(function(key) {
+                var entry = data[key];
+                if (!entry) return;
+                if (entry.undone) undoneCount++;
+
+                var modName = uidNameCache[entry.moderatorUid] || entry.moderatorName || entry.moderatorUid || '?';
+                var targetName = uidNameCache[entry.targetUid] || entry.targetName || entry.targetUid || '?';
+                var label = ACTION_TYPE_LABELS[entry.type] || entry.type || '?';
+                var preview = contentPreview(entry);
+
+                html += '<div class="mod-action-entry' + (entry.undone ? ' undone-entry' : '') + '">'
+                    + '<div class="mod-action-header">'
+                    + '<span class="mod-action-time">' + formatDate(entry.createdAt) + '</span>'
+                    + modActionBadge(entry.type, entry.undone)
+                    + '<span class="badge">' + escapeHtml(label) + '</span>'
+                    + '<span>by <strong>' + escapeHtml(modName) + '</strong></span>'
+                    + '<span>→ <strong>' + escapeHtml(targetName) + '</strong></span>'
+                    + (entry.undone
+                        ? '<span style="color:#888;font-size:10px;">Undone ' + formatDate(entry.undoneAt) + ' by ' + escapeHtml(uidNameCache[entry.undoneBy] || entry.undoneBy || 'admin') + '</span>'
+                        : '<button class="undo-btn" id="undo-' + key + '" onclick="undoModAction(\'' + key + '\', this)">Undo</button>')
+                    + '</div>'
+                    + (preview ? '<div class="mod-action-preview">' + escapeHtml(preview) + '</div>' : '')
+                    + '</div>';
+            });
+
+            entriesEl.innerHTML = html;
+            statusEl.textContent = keys.length + ' action(s) loaded. ' + undoneCount + ' undone.';
+        } catch (err) {
+            console.error(err);
+            statusEl.textContent = 'Error: ' + (err.message || err);
+        }
+    }
+
+    async function undoModAction(key, btn) {
+        if (!confirm('Undo this action? This cannot be undone again.')) return;
+        btn.disabled = true;
+        btn.textContent = 'Working…';
+
+        try {
+            var snap = await rtdb.ref('mod_actions/' + key).once('value');
+            var entry = snap.val();
+            if (!entry || entry.undone) {
+                btn.textContent = 'Already undone';
+                return;
+            }
+
+            var auth = firebase.auth();
+            var user = auth.currentUser;
+            var updates = {};
+
+            if (entry.type === 'timeout') {
+                // Lift the timeout
+                updates['social_timeouts/' + entry.targetUid] = null;
+                updates['users_private/' + entry.targetUid + '/timeout_seen'] = null;
+            } else if (entry.savedPath && entry.savedData) {
+                // Restore the deleted content
+                updates[entry.savedPath] = entry.savedData;
+            }
+
+            // Mark as undone
+            updates['mod_actions/' + key + '/undone'] = true;
+            updates['mod_actions/' + key + '/undoneAt'] = firebase.database.ServerValue.TIMESTAMP;
+            updates['mod_actions/' + key + '/undoneBy'] = user ? user.uid : 'admin';
+
+            await rtdb.ref().update(updates);
+            btn.closest('.mod-action-entry').classList.add('undone-entry');
+            btn.replaceWith(document.createTextNode('✓ Undone'));
+            document.getElementById('mod-actions-status').textContent = 'Action undone successfully.';
+        } catch (err) {
+            console.error(err);
+            btn.disabled = false;
+            btn.textContent = 'Undo';
+            alert('Undo failed: ' + (err.message || err));
+        }
+    }
+
+    async function fetchActiveTimeouts() {
+        var listEl = document.getElementById('active-timeouts-list');
+        try {
+            var snap = await rtdb.ref('social_timeouts').once('value');
+            var data = snap.val() || {};
+            var uids = Object.keys(data);
+
+            if (uids.length === 0) {
+                listEl.innerHTML = '<div class="no-data">No active timeouts.</div>';
+                return;
+            }
+
+            var now = Date.now();
+
+            // Fetch in parallel: timeout_seen for each uid, strike records, and banned_ips
+            var [seenSnaps, strikeSnaps, bannedIpsSnap] = await Promise.all([
+                Promise.all(uids.map(function(uid) {
+                    return rtdb.ref('users_private/' + uid + '/timeout_seen').once('value');
+                })),
+                Promise.all(uids.map(function(uid) {
+                    return rtdb.ref('automod_strikes/' + uid).once('value');
+                })),
+                rtdb.ref('banned_ips').once('value')
+            ]);
+
+            // Build set of banned UIDs from banned_ips entries (nuke_user.js stores bannedUid)
+            var bannedByIp = new Set();
+            var bannedIpsData = bannedIpsSnap.val() || {};
+            Object.values(bannedIpsData).forEach(function(entry) {
+                if (entry && entry.bannedUid) bannedByIp.add(entry.bannedUid);
+            });
+
+            // Build annotated list
+            var annotated = uids.map(function(uid, i) {
+                var t = data[uid] || {};
+                var timeoutSeen = seenSnaps[i].val();
+                var durationMs = t.durationHours ? t.durationHours * 3600000 : null;
+                var strikes = strikeSnaps[i].val();
+
+                // Banned = IP-banned via nuke_user.js OR automod strike limit reached
+                var isBanned = bannedByIp.has(uid) || (strikes && strikes.count >= STRIKE_LIMIT);
+
+                var expiresAt = null;
+                var status;
+                if (timeoutSeen && durationMs) {
+                    expiresAt = timeoutSeen + durationMs;
+                    status = expiresAt > now ? 'active' : 'expired';
+                } else if (!timeoutSeen) {
+                    status = 'pending';
+                } else {
+                    status = 'active';
+                }
+
+                return { uid: uid, t: t, timeoutSeen: timeoutSeen, expiresAt: expiresAt, status: status, isBanned: isBanned };
+            });
+
+            // Only show non-expired entries
+            var active = annotated.filter(function(e) { return e.status !== 'expired'; });
+
+            if (active.length === 0) {
+                listEl.innerHTML = '<div class="no-data">No active timeouts.</div>';
+                return;
+            }
+
+            // Resolve display names in parallel
+            var allUids = new Set();
+            active.forEach(function(e) {
+                allUids.add(e.uid);
+                if (e.t.moderatedBy) allUids.add(e.t.moderatedBy);
+            });
+            await Promise.all(Array.from(allUids).map(function(uid) { return resolveUid(uid); }));
+
+            // Sort: pending first, then soonest-expiring; banned always at top within each group
+            active.sort(function(a, b) {
+                if (a.isBanned !== b.isBanned) return a.isBanned ? -1 : 1;
+                if (a.status === 'pending' && b.status !== 'pending') return -1;
+                if (b.status === 'pending' && a.status !== 'pending') return 1;
+                if (a.expiresAt === null) return 1;
+                if (b.expiresAt === null) return -1;
+                return a.expiresAt - b.expiresAt;
+            });
+
+            var html = '';
+            active.forEach(function(e) {
+                var uid = e.uid, t = e.t;
+                var timeRemaining;
+                if (e.status === 'pending') {
+                    timeRemaining = 'pending — user hasn\'t opened app yet';
+                } else if (e.expiresAt !== null) {
+                    var remaining = e.expiresAt - now;
+                    var h = Math.floor(remaining / 3600000);
+                    var m = Math.floor((remaining % 3600000) / 60000);
+                    timeRemaining = h > 0 ? (h + 'h ' + m + 'm remaining') : (m + 'm remaining');
+                } else {
+                    timeRemaining = 'active';
+                }
+                var userName = uidNameCache[uid] || uid;
+                var modName = t.moderatedBy ? (uidNameCache[t.moderatedBy] || t.moderatedBy) : '?';
+                var userStyle = e.isBanned ? 'color:#c00;font-weight:bold;' : '';
+                var bannedBadge = e.isBanned ? ' <span class="badge badge-nuke">BANNED</span>' : '';
+
+                html += '<div class="timeout-row" id="tr-' + uid + '">'
+                    + '<span class="timeout-user" style="' + userStyle + '">' + escapeHtml(userName) + bannedBadge + '</span>'
+                    + '<span class="timeout-remaining">' + escapeHtml(timeRemaining) + '</span>'
+                    + '<span class="timeout-reason">' + escapeHtml(t.reason || '(no reason given)') + '</span>'
+                    + '<span style="color:#666;font-size:10px;">by ' + escapeHtml(modName) + '</span>'
+                    + '<button class="lift-btn" onclick="liftTimeout(\'' + uid + '\', this)">Lift</button>'
+                    + '</div>';
+            });
+            listEl.innerHTML = html;
+        } catch (err) {
+            listEl.innerHTML = '<div class="no-data">Error: ' + escapeHtml(err.message || String(err)) + '</div>';
+        }
+    }
+
+    async function liftTimeout(uid, btn) {
+        if (!confirm('Lift timeout for ' + (uidNameCache[uid] || uid) + '?')) return;
+        btn.disabled = true;
+        try {
+            var updates = {};
+            updates['social_timeouts/' + uid] = null;
+            updates['users_private/' + uid + '/timeout_seen'] = null;
+            await rtdb.ref().update(updates);
+            var row = document.getElementById('tr-' + uid);
+            if (row) row.remove();
+            var listEl = document.getElementById('active-timeouts-list');
+            if (!listEl.querySelector('.timeout-row')) {
+                listEl.innerHTML = '<div class="no-data">No active timeouts.</div>';
+            }
+        } catch (err) {
+            btn.disabled = false;
+            alert('Failed to lift timeout: ' + (err.message || err));
+        }
+    }
+
+    async function clearModActionsLog() {
+        if (!confirm('Permanently delete ALL moderator action log entries?\n\nThis cannot be undone — the entire history will be erased.')) return;
+        if (!confirm('Last chance: really clear the entire log?')) return;
+        try {
+            await rtdb.ref('mod_actions').remove();
+            document.getElementById('mod-actions-entries').innerHTML = '<div class="no-data">Log cleared.</div>';
+            document.getElementById('mod-actions-status').textContent = 'Log cleared.';
+        } catch (err) {
+            alert('Failed to clear log: ' + (err.message || err));
+        }
+    }
 
     function copyOutput() {
         var ta = document.getElementById('output-text');

@@ -729,7 +729,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
     <script src="time.js"></script>
-    <script src="theme.js?v=16"></script>
+    <script src="theme.js?v=17"></script>
     <script src="bad_words.js?v=4"></script>
     <script src="js/i18n.js"></script>
     <script src="social-timeout.js"></script>
@@ -743,6 +743,10 @@
             <div class="close-box" onclick="window.location.href='index'">X</div>
             <span class="title-text" data-i18n="topics.title">Topics</span>
             <div style="position:absolute; right:10px; z-index:5; display:flex; align-items:center;">
+                <label id="mod-toggle-label" style="display:none; font-size:0.75rem; cursor:pointer; background:white; border:2px solid black; padding:2px 5px; font-weight:bold; margin-right:5px; align-items:center;">
+                    <input type="checkbox" id="mod-mode-check" onchange="toggleModeratorMode(this.checked)" style="margin-right:4px;">
+                    Mod Mode
+                </label>
                 <button class="sys-btn" onclick="openRulesModal()"
                     style="padding:2px 8px; font-size:0.7rem; margin-right:5px;"
                     data-i18n="topics.btn.rules">Rules</button>
@@ -1073,6 +1077,8 @@
         var commentsListener = null;
         var renderedCommentIds = {}; // Tracks DOM-rendered comments for the active topic (Kindle memory)
         var isModMode = false;
+        var isCurrentUserMod = false;
+        var isModeratorMode = false;
         var RULES_VERSION = 1; // Current Rules Version
         var currentUserRulesVersion = 0;
 
@@ -1162,6 +1168,14 @@
                             });
                         });
                         checkAdmin();
+                        // Check moderator status
+                        db.ref('moderators/' + user.uid).once('value').then(function(modSnap) {
+                            isCurrentUserMod = modSnap.val() === true;
+                            if (isCurrentUserMod) {
+                                var toggler = document.getElementById('mod-toggle-label');
+                                if (toggler) toggler.style.display = 'flex';
+                            }
+                        });
                     });
                 });
 
@@ -1223,7 +1237,7 @@
                 if (userTopicStates[t.id] && userTopicStates[t.id].lastReadCount) {
                     lastRead = userTopicStates[t.id].lastReadCount;
                 }
-                
+
                 if (currentCount > lastRead) {
                     if (!userTopicStates[t.id]) userTopicStates[t.id] = {};
                     userTopicStates[t.id].lastReadCount = currentCount;
@@ -1746,6 +1760,132 @@
             }
         }
 
+        function toggleModeratorMode(enabled) {
+            isModeratorMode = enabled;
+            if (currentTopicId) selectTopic(currentTopicId, true);
+        }
+
+        function timeOutUser(uid, name) {
+            if (!currentUser || !isCurrentUserMod || !isModeratorMode || !uid || uid === currentUser.uid) return;
+
+            showTimeoutModal(uid, name || "this user");
+        }
+
+        function showTimeoutModal(uid, name) {
+            var existing = document.getElementById('moderator-timeout-overlay');
+            if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+            var overlay = document.createElement('div');
+            overlay.id = 'moderator-timeout-overlay';
+            overlay.className = 'modal-overlay';
+            overlay.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.95); z-index:10000; display:flex; align-items:center; justify-content:center; font-family:Verdana, Geneva, sans-serif;';
+
+            var box = document.createElement('div');
+            box.className = 'modal-box';
+            box.style.cssText = 'background:white; border:2px solid black; box-shadow:4px 4px 0 black; width:85%; max-width:360px;';
+
+            var title = document.createElement('div');
+            title.style.cssText = 'border-bottom:2px solid black; padding:8px; font-weight:bold; text-align:center;';
+            title.textContent = 'Time Out User';
+
+            var body = document.createElement('div');
+            body.style.cssText = 'padding:15px;';
+
+            var target = document.createElement('div');
+            target.style.cssText = 'font-size:0.85rem; margin-bottom:10px;';
+            target.textContent = 'Target: ' + name;
+
+            var hoursLabel = document.createElement('label');
+            hoursLabel.style.cssText = 'display:block; font-weight:bold; font-size:0.8rem; margin-bottom:4px;';
+            hoursLabel.textContent = 'Hours (max 24)';
+            var hoursInput = document.createElement('input');
+            hoursInput.type = 'number';
+            hoursInput.min = '0.25';
+            hoursInput.max = '24';
+            hoursInput.step = '0.25';
+            hoursInput.value = '1';
+            hoursInput.style.cssText = 'box-sizing:border-box; width:100%; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; margin-bottom:10px;';
+
+            var reasonLabel = document.createElement('label');
+            reasonLabel.style.cssText = 'display:block; font-weight:bold; font-size:0.8rem; margin-bottom:4px;';
+            reasonLabel.textContent = 'Reason';
+            var reasonInput = document.createElement('textarea');
+            reasonInput.maxLength = 200;
+            reasonInput.style.cssText = 'box-sizing:border-box; width:100%; min-height:70px; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; resize:none; margin-bottom:12px;';
+
+            var errorEl = document.createElement('div');
+            errorEl.style.cssText = 'min-height:16px; color:red; font-size:0.8rem; margin-bottom:8px;';
+
+            var btnRow = document.createElement('div');
+            btnRow.style.cssText = 'text-align:right;';
+            var cancelBtn = document.createElement('button');
+            cancelBtn.className = 'sys-btn';
+            cancelBtn.style.marginRight = '8px';
+            cancelBtn.textContent = 'Cancel';
+            var okBtn = document.createElement('button');
+            okBtn.className = 'sys-btn';
+            okBtn.textContent = 'Time Out';
+
+            cancelBtn.onclick = function () { overlay.parentNode.removeChild(overlay); };
+            okBtn.onclick = function () {
+                var hours = parseFloat(hoursInput.value);
+                var reason = reasonInput.value.replace(/^\s+|\s+$/g, '');
+                if (isNaN(hours) || hours <= 0 || hours > 24) {
+                    errorEl.textContent = "Timeout length must be more than 0 and no more than 24 hours.";
+                    return;
+                }
+                if (!reason) {
+                    errorEl.textContent = "A reason is required.";
+                    return;
+                }
+                overlay.parentNode.removeChild(overlay);
+                applyTimeout(uid, name, hours, reason);
+            };
+
+            btnRow.appendChild(cancelBtn);
+            btnRow.appendChild(okBtn);
+            body.appendChild(target);
+            body.appendChild(hoursLabel);
+            body.appendChild(hoursInput);
+            body.appendChild(reasonLabel);
+            body.appendChild(reasonInput);
+            body.appendChild(errorEl);
+            body.appendChild(btnRow);
+            box.appendChild(title);
+            box.appendChild(body);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            reasonInput.focus();
+        }
+
+        function applyTimeout(uid, name, hours, reason) {
+            showConfirmModal("Time out " + (name || "this user") + " for " + hours + " hour(s)?", function () {
+                var logKey = db.ref('mod_actions').push().key;
+                var updates = {};
+                updates['social_timeouts/' + uid] = {
+                    reason: reason,
+                    durationHours: hours,
+                    moderatedBy: currentUser.uid,
+                    createdAt: firebase.database.ServerValue.TIMESTAMP
+                };
+                updates['users_private/' + uid + '/timeout_seen'] = null;
+                updates['mod_actions/' + logKey] = {
+                    type: 'timeout',
+                    moderatorUid: currentUser.uid,
+                    moderatorName: currentUserName || currentUser.uid,
+                    targetUid: uid,
+                    targetName: name || uid,
+                    durationHours: hours,
+                    reason: reason,
+                    createdAt: firebase.database.ServerValue.TIMESTAMP,
+                    undone: false
+                };
+                db.ref().update(updates).catch(function (e) {
+                    showAlertModal("Timeout failed: " + e.message, "Error");
+                });
+            });
+        }
+
         function deleteTopic(id) {
             showConfirmModal("Are you sure you want to delete this topic and all comments?", function () {
                 // Delete topic
@@ -1805,13 +1945,20 @@
             // Format time header for hover or future use
             var dateHeader = window.rekindleFormatTime(dateObj, { weekday: 'short', month: 'short', day: 'numeric' });
 
+            var safeName = escapeHtml(msg.authorName || window.t('common.anonymous', 'Anonymous'));
             var delBtn = '';
             if (isModMode && msg.id) {
-                delBtn = '<span style="color:red; cursor:pointer; margin-left:5px; font-weight:bold;" onclick="deleteComment(\'' + msg.id + '\')">[X]</span>';
+                delBtn += '<span style="color:red; cursor:pointer; margin-left:5px; font-weight:bold;" onclick="deleteComment(\'' + msg.id + '\')">[X]</span>';
+            } else if (isCurrentUserMod && isModeratorMode && msg.id) {
+                var timeoutUid = (msg.authorId || '').replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+                var timeoutName = (msg.authorName || 'this user').replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+                if (timeoutUid && (!currentUser || timeoutUid !== currentUser.uid)) {
+                    delBtn += '<button style="background:black;color:white;border:none;padding:1px 6px;font-size:0.7rem;cursor:pointer;font-family:inherit;margin-left:5px;" onclick="timeOutUser(\'' + timeoutUid + '\', \'' + timeoutName + '\')">Timeout</button>';
+                }
+                delBtn += '<button style="background:black;color:white;border:none;padding:1px 6px;font-size:0.7rem;cursor:pointer;font-family:inherit;margin-left:5px;" onclick="deleteComment(\'' + msg.id + '\')">Delete</button>';
             }
 
             var authorNameSpanId = 'author-name-' + msg.id;
-            var safeName = escapeHtml(msg.authorName || window.t('common.anonymous', 'Anonymous'));
 
             // Profanity Filter (Always enforced)
             var displayBody = msg.body;
@@ -1871,11 +2018,90 @@
             window.open('neighbourhood.html?uid=' + uid + '&from=topics', 'ReKindle_Neighbourhood');
         }
 
+        function showModDeleteModal(message, onConfirm) {
+            var existing = document.getElementById('mod-delete-overlay');
+            if (existing) existing.parentNode.removeChild(existing);
+            var overlay = document.createElement('div');
+            overlay.id = 'mod-delete-overlay';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.95);z-index:10000;display:flex;align-items:center;justify-content:center;font-family:Verdana,Geneva,sans-serif;';
+            var box = document.createElement('div');
+            box.style.cssText = 'background:white;border:2px solid black;box-shadow:4px 4px 0 black;width:85%;max-width:340px;';
+            var titleBar = document.createElement('div');
+            titleBar.style.cssText = 'border-bottom:2px solid black;padding:8px;font-weight:bold;text-align:center;font-size:0.85rem;';
+            titleBar.textContent = 'Confirm Delete';
+            var body = document.createElement('div');
+            body.style.cssText = 'padding:15px;';
+            var msg = document.createElement('div');
+            msg.style.cssText = 'font-size:0.85rem;margin-bottom:10px;';
+            msg.textContent = message;
+            var reasonLabel = document.createElement('label');
+            reasonLabel.style.cssText = 'display:block;font-weight:bold;font-size:0.8rem;margin-bottom:4px;';
+            reasonLabel.textContent = 'Reason (optional)';
+            var reasonInput = document.createElement('textarea');
+            reasonInput.maxLength = 200;
+            reasonInput.placeholder = 'e.g. spam, harassment…';
+            reasonInput.style.cssText = 'box-sizing:border-box;width:100%;min-height:60px;border:2px solid black;border-radius:0;padding:6px;font-family:inherit;font-size:0.8rem;resize:none;margin-bottom:12px;';
+            var btnRow = document.createElement('div');
+            btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
+            var cancelBtn = document.createElement('button');
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.style.cssText = 'font-family:inherit;font-size:0.8rem;border:2px solid black;background:white;padding:4px 12px;cursor:pointer;box-shadow:2px 2px 0 black;';
+            cancelBtn.onclick = function() { document.body.removeChild(overlay); };
+            var confirmBtn = document.createElement('button');
+            confirmBtn.textContent = 'Delete';
+            confirmBtn.style.cssText = 'font-family:inherit;font-size:0.8rem;border:2px solid black;background:black;color:white;padding:4px 12px;cursor:pointer;box-shadow:2px 2px 0 black;';
+            confirmBtn.onclick = function() {
+                var reason = reasonInput.value.trim();
+                document.body.removeChild(overlay);
+                onConfirm(reason);
+            };
+            btnRow.appendChild(cancelBtn);
+            btnRow.appendChild(confirmBtn);
+            body.appendChild(msg);
+            body.appendChild(reasonLabel);
+            body.appendChild(reasonInput);
+            body.appendChild(btnRow);
+            box.appendChild(titleBar);
+            box.appendChild(body);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            setTimeout(function() { reasonInput.focus(); }, 50);
+        }
+
         function deleteComment(id) {
-            showConfirmModal("Delete this comment?", function () {
-                if (!currentTopicId) return;
-                db.ref('topic_comments/' + currentTopicId + '/' + id).remove();
-            });
+            if (!currentTopicId) return;
+            var isMod = isCurrentUserMod && isModeratorMode;
+            if (isMod) {
+                showModDeleteModal("Delete this comment?", function(reason) {
+                    db.ref('topic_comments/' + currentTopicId + '/' + id).once('value').then(function(snap) {
+                        var commentData = snap.val();
+                        if (!commentData) return;
+                        var logKey = db.ref('mod_actions').push().key;
+                        var updates = {};
+                        updates['mod_actions/' + logKey] = {
+                            type: 'delete_topic_comment',
+                            moderatorUid: currentUser.uid,
+                            moderatorName: currentUserName || currentUser.uid,
+                            targetUid: commentData.authorId || '',
+                            targetName: commentData.authorName || '',
+                            reason: reason || '',
+                            createdAt: firebase.database.ServerValue.TIMESTAMP,
+                            savedPath: 'topic_comments/' + currentTopicId + '/' + id,
+                            savedData: commentData,
+                            topicId: currentTopicId,
+                            undone: false
+                        };
+                        updates['topic_comments/' + currentTopicId + '/' + id] = null;
+                        db.ref().update(updates).catch(function(e) {
+                            showAlertModal("Delete failed: " + e.message, "Error");
+                        });
+                    });
+                });
+            } else {
+                showConfirmModal("Delete this comment?", function() {
+                    db.ref('topic_comments/' + currentTopicId + '/' + id).remove();
+                });
+            }
         }
 
         function handleKey(e) {
@@ -1920,7 +2146,7 @@
 
                 isPostingComment = true;
                 setTimeout(function() { isPostingComment = false; }, 3000); // failsafe unlock
-                
+
                 var btnSend = document.getElementById('btn-send');
                 if (btnSend) {
                     btnSend.disabled = true;
@@ -2197,7 +2423,7 @@
                             db.ref('topics').orderByChild('authorId').equalTo(currentUser.uid).once('value').then(function (snap) {
                                 var recentlyCreated = false;
                                 var oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
-                                
+
                                 snap.forEach(function (childSnap) {
                                     var topic = childSnap.val();
                                     if (topic.timestamp && topic.timestamp > oneWeekAgo) {
@@ -2232,7 +2458,7 @@
                         return titleWords.some(function(w) { return tTitle.indexOf(w) !== -1; });
                     });
                 }
-                
+
                 if (similarTopics.length > 0) {
                     var msg = "There are already similar topics (e.g. '" + similarTopics[0].title + "'). Are you sure you want to make a new one?";
                     showConfirmModal(msg, doSubmit);
@@ -2384,7 +2610,7 @@
                         if (currentName && currentName !== window.t('common.anonymous', 'Anonymous') && currentName !== 'Anonymous') {
                             profile = { displayName: currentName };
                         } else {
-                            // Last resort: splitting ID is NOT helpful for UIDs, but better than "Anonymous" 
+                            // Last resort: splitting ID is NOT helpful for UIDs, but better than "Anonymous"
                             // if it happens to be an old-style UID or we can't find anything else.
                             // But usually appendMessage already put a name there.
                             profile = { displayName: window.t('common.anonymous', 'Anonymous') };
@@ -2534,7 +2760,7 @@
         var originalToggleModMode = window.toggleModMode;
         window.toggleModMode = function () {
             // Call original logic which toggles isModMode boolean
-            // We can't easily call original if it was defined anonymously or relies on closure, 
+            // We can't easily call original if it was defined anonymously or relies on closure,
             // but looking at previous code, it just toggles a var and refreshes.
             // Redefining it completely is safer to ensure it works with our new button.
 
