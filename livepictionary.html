@@ -581,15 +581,22 @@ function showScreen(name) {
 
 function generateId() { return Math.random().toString(36).substr(2, 9); }
 
+let authInitTimer = null;
 auth.onAuthStateChanged(function(user) {
+    if (authInitTimer) { clearTimeout(authInitTimer); authInitTimer = null; }
     if (user) {
         myUid = user.uid;
         const dn = user.displayName || (user.email ? user.email.split('@')[0] : 'Player');
         currentUser = { uid: user.uid, name: dn };
         checkUrlForMatch();
     } else {
-        showAlert(tfmt('pictionary.alert.signin_title', 'Sign In Required'), tfmt('pictionary.alert.signin_msg', 'Please log in from the home screen first.'));
-        setTimeout(goHome, 3000);
+        // Firebase auth can briefly report null while it initialises from
+        // localStorage. Wait a short moment before treating it as a real
+        // sign-out / missing-auth situation.
+        authInitTimer = setTimeout(function() {
+            showAlert(tfmt('pictionary.alert.signin_title', 'Sign In Required'), tfmt('pictionary.alert.signin_msg', 'Please log in from the home screen first.'));
+            setTimeout(goHome, 3000);
+        }, 1200);
     }
 });
 
@@ -655,7 +662,8 @@ async function hostGame() {
     };
 
     mmRef.onDisconnect().remove();
-    matchRef.onDisconnect().remove();
+    // Do NOT set matchRef.onDisconnect().remove() here — a brief host network
+    // hiccup would destroy the entire match and kick all players out.
 
     await matchRef.set(initial);
     attachRefs();
@@ -684,9 +692,16 @@ async function joinMatch(mId) {
 
     if (!players[currentUser.uid]) {
         if (state.status !== 'lobby') {
-            showAlert(tfmt('pictionary.alert.inprogress_title', 'In Progress'), tfmt('pictionary.alert.inprogress_msg', 'This game has already started.'));
-            setTimeout(goHome, 2000);
-            return;
+            // Allow the original host to rejoin an in-progress game (e.g. after
+            // a page refresh or brief disconnect). Everyone else must wait for
+            // the next lobby.
+            if (state.host === currentUser.uid) {
+                isHost = true;
+            } else {
+                showAlert(tfmt('pictionary.alert.inprogress_title', 'In Progress'), tfmt('pictionary.alert.inprogress_msg', 'This game has already started.'));
+                setTimeout(goHome, 2000);
+                return;
+            }
         }
         if (playerCount >= 8) {
             showAlert(tfmt('pictionary.alert.full_title', 'Full'), tfmt('pictionary.alert.full_msg', 'This lobby is full.'));
@@ -716,7 +731,10 @@ function attachRefs() {
     strokesRef = matchRef.child('strokes');
     chatRef = matchRef.child('chat');
     presenceRef = matchRef.child('players').child(currentUser.uid);
-    presenceRef.onDisconnect().remove();
+    // Removed onDisconnect().remove() — brief network hiccups were causing
+    // players to be kicked out mid-game. Players now leave explicitly via
+    // leaveMatch() or page close (which we accept as staying in the lobby
+    // until the host cleans up or the match ends).
 
     // Stroke additions (incremental)
     strokesRef.on('child_added', function(snap) {
@@ -764,6 +782,10 @@ function listenToMatch() {
         if (!prev || prev.round !== data.round || prev.drawerIdx !== data.drawerIdx || prev.status !== data.status) {
             seenStrokeKeys = {};
             clearCanvasLocal();
+            // Re-fetch all strokes so players joining mid-round (or anyone
+            // whose canvas was cleared by a state transition) still sees the
+            // current drawing.
+            redrawAllStrokes();
         }
 
         updateHud();
