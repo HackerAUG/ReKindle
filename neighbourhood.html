@@ -1717,7 +1717,7 @@
             if (!uid) return;
             // Deep link to KindleChat
             // This relies on the new KindleChat integration we will build
-            window.parent.postMessage({ type: 'open-app', app: 'kindlechat', params: { chat_with: uid } }, '*');
+            window.parent.postMessage({ type: 'open-app', app: 'kindlechat', params: { chat_with: uid } }, window.location.origin);
             // Fallback for standalone/direct usage if not in iframe or similar system
             window.location.href = `kindlechat?chat_with=${uid}`;
         }
@@ -1804,7 +1804,9 @@
                         iconDiv.style.marginRight = '5px';
                         iconDiv.style.width = '14px';
                         iconDiv.style.height = '14px';
-                        iconDiv.innerHTML = iconSvg;
+                        // Validate SVG content to prevent XSS
+                        const safeIconSvg = (iconSvg && iconSvg.trim().startsWith('<svg')) ? iconSvg : '<svg viewBox="0 0 24 24" style="width:14px;height:14px;"><circle cx="12" cy="12" r="10" stroke="black" fill="none"/></svg>';
+                        iconDiv.innerHTML = safeIconSvg;
                         // Ensure svg fits
                         const svg = iconDiv.querySelector('svg');
                         if (svg) {
@@ -1820,9 +1822,9 @@
                         item.appendChild(titleSpan);
 
                         item.onclick = () => {
-                            window.parent.postMessage({ type: 'open-app', app: 'topics', params: { id: tid } }, '*');
+                            window.parent.postMessage({ type: 'open-app', app: 'topics', params: { id: tid } }, window.location.origin);
                             // Fallback
-                            window.location.href = `topics?id=${tid}`;
+                            window.location.href = `topics?id=${encodeURIComponent(tid)}`;
                         };
 
                         list.appendChild(item);
@@ -2552,7 +2554,9 @@
 
         function addSocialLink(container, text, url) {
             const a = document.createElement('a');
-            a.href = url;
+            // Validate social link URL to prevent javascript: injection
+            const safeUrl = (/^(https?:|mailto:)/i.test(url)) ? url : '#';
+            a.href = safeUrl;
             a.target = '_blank';
             a.className = 'social-icon';
             a.style.cssText = 'display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border:2px solid black; margin:2px; text-decoration:none; color:black; font-weight:bold;';
@@ -2581,7 +2585,7 @@
             const names = ["Alex", "Jordan", "Casey", "Riley", "Morgan", "Taylor", "Quinn", "Avery", "Blake", "Cameron"];
 
             for (let i = 0; i < count; i++) {
-                const uid = 'test_' + Math.random().toString(36).substr(2, 9);
+                const uid = 'test_' + (typeof crypto !== 'undefined' && crypto.getRandomValues ? Array.from(crypto.getRandomValues(new Uint8Array(12))).map(b => b.toString(36)).join('').substr(0, 9) : Math.random().toString(36).substr(2, 9));
                 const city = cities[Math.floor(Math.random() * cities.length)];
                 const ints = [];
                 for (let j = 0; j < 3; j++) {
@@ -2899,16 +2903,16 @@
             if (isAdminMode) {
                 adminControls = `
                 <div style="position:absolute; top:5px; right:5px; display:flex; z-index:10;">
-                    <button class="sys-btn" style="padding:2px 5px; font-size:0.7rem; margin-right:5px;" onclick="editPost('${post.id}')">Edit</button>
-                    <button class="sys-btn" style="padding:2px 5px; font-size:0.7rem; margin-right:5px; color:blue;" onclick="reprocessPost('${post.id}')" title="Reprocess Translation">Rp</button>
-                    <button class="sys-btn" style="padding:2px 5px; font-size:0.7rem; background:black; color:white;" onclick="deletePost('${post.id}')">Del</button>
+                    <button class="sys-btn" style="padding:2px 5px; font-size:0.7rem; margin-right:5px;" onclick="editPost('${escapeHtml(post.id)}')">Edit</button>
+                    <button class="sys-btn" style="padding:2px 5px; font-size:0.7rem; margin-right:5px; color:blue;" onclick="reprocessPost('${escapeHtml(post.id)}')" title="Reprocess Translation">Rp</button>
+                    <button class="sys-btn" style="padding:2px 5px; font-size:0.7rem; background:black; color:white;" onclick="deletePost('${escapeHtml(post.id)}')">Del</button>
                 </div>
                 `;
             } else if (isModeratorMode) {
                 if (post.uid && (!currentUser || post.uid !== currentUser.uid)) {
                     modPostControls += `<button style="background:black;color:white;border:none;padding:1px 6px;font-size:0.7rem;cursor:pointer;font-family:inherit;margin-left:5px;" onclick="timeOutUser('${escapeJs(post.uid)}', '${escapeJs(dName || 'this user')}')">Timeout</button>`;
                 }
-                modPostControls += `<button style="background:black;color:white;border:none;padding:1px 6px;font-size:0.7rem;cursor:pointer;font-family:inherit;margin-left:5px;" onclick="deletePost('${post.id}')">Delete</button>`;
+                modPostControls += `<button style="background:black;color:white;border:none;padding:1px 6px;font-size:0.7rem;cursor:pointer;font-family:inherit;margin-left:5px;" onclick="deletePost('${escapeHtml(post.id)}')">Delete</button>`;
             }
 
             let displayText = post.text;
@@ -2949,7 +2953,7 @@
                 displayText = translationText;
                 isTranslatedDisplay = true;
                 const trLabel = window.t ? window.t('kindlechat.msg.show_original', 'Show Original') : 'Show Original';
-                toggleBtnHtml = `<div style="margin-top: 5px;"><span id="toggle-${post.id}" onclick="toggleTranslation('${post.id}')" style="font-size:0.7rem; color:#666; text-decoration:underline; cursor:pointer;">${trLabel}</span></div>`;
+                toggleBtnHtml = `<div style="margin-top: 5px;"><span id="toggle-${escapeHtml(post.id)}" onclick="toggleTranslation('${escapeHtml(post.id)}')" style="font-size:0.7rem; color:#666; text-decoration:underline; cursor:pointer;">${trLabel}</span></div>`;
             }
 
             if (window.filterBadWords) {
@@ -2971,7 +2975,7 @@
                     <canvas id="${avatarId}" class="avatar-canvas" width="48" height="48" style="width:48px; height:48px; border:2px solid black; image-rendering:pixelated; flex-shrink:0; cursor:pointer; margin-right:10px;"></canvas>
                     <div style="flex:1; min-width:0;">
                          <div style="display:flex; justify-content:space-between; align-items:center; min-width:0;">
-                            <div class="post-name-row" onclick="openUserProfile('${post.uid}')">
+                            <div class="post-name-row" onclick="openUserProfile('${escapeHtml(post.uid)}')">
                                 ${nameBadge ? `<span style="margin-right:4px; display:flex; align-items:center; flex-shrink:0;">${nameBadge}</span>` : ''}
                                 <strong style="font-size:0.95rem; margin-right:4px;">${escapeHtml(dName)}</strong>
                                 ${handleHtml}
@@ -3119,13 +3123,13 @@
             let modCommentControls = '';
             if (isAdminMode) {
                 adminDelBtn = `<div style="position:absolute; right:3px; top:3px; display:flex;">
-                    <button class="sys-btn" style="padding:1px 4px; font-size:0.6rem; background:black; color:white;" onclick="deleteComment('${postId}', '${comment.id}')">Del</button>
+                    <button class="sys-btn" style="padding:1px 4px; font-size:0.6rem; background:black; color:white;" onclick="deleteComment('${escapeHtml(postId)}', '${escapeHtml(comment.id)}')">Del</button>
                 </div>`;
             } else if (isModeratorMode) {
                 if (comment.uid && (!currentUser || comment.uid !== currentUser.uid)) {
                     modCommentControls += `<button style="background:black;color:white;border:none;padding:1px 5px;font-size:0.65rem;cursor:pointer;font-family:inherit;margin-left:4px;" onclick="timeOutUser('${escapeJs(comment.uid)}', '${escapeJs(displayName || 'this user')}')">Timeout</button>`;
                 }
-                modCommentControls += `<button style="background:black;color:white;border:none;padding:1px 5px;font-size:0.65rem;cursor:pointer;font-family:inherit;margin-left:4px;" onclick="deleteComment('${postId}', '${comment.id}')">Delete</button>`;
+                modCommentControls += `<button style="background:black;color:white;border:none;padding:1px 5px;font-size:0.65rem;cursor:pointer;font-family:inherit;margin-left:4px;" onclick="deleteComment('${escapeHtml(postId)}', '${escapeHtml(comment.id)}')">Delete</button>`;
             }
 
             const commentDiv = document.createElement('div');
@@ -3138,7 +3142,7 @@
             commentDiv.innerHTML = `
                 ${adminDelBtn}
                 <div style="display:flex; align-items:center; min-width:0;">
-                    <div class="comment-name-row" onclick="openUserProfile('${comment.uid}')">
+                    <div class="comment-name-row" onclick="openUserProfile('${escapeHtml(comment.uid)}')">
                         ${nameBadge ? '<span style="margin-right:3px; display:inline-flex; align-items:center; flex-shrink:0;">' + nameBadge + '</span>' : ''}
                         <strong style="font-size:0.85rem;">${escapeHtml(displayName)}</strong>
                         ${handleHtml}
@@ -3195,11 +3199,16 @@
             msg.textContent = message;
             const reasonLabel = document.createElement('label');
             reasonLabel.style.cssText = 'display:block;font-weight:bold;font-size:0.8rem;margin-bottom:4px;';
-            reasonLabel.textContent = 'Reason (optional)';
+            reasonLabel.textContent = 'Reason';
             const reasonInput = document.createElement('textarea');
             reasonInput.maxLength = 200;
             reasonInput.placeholder = 'e.g. spam, harassment…';
-            reasonInput.style.cssText = 'box-sizing:border-box;width:100%;min-height:60px;border:2px solid black;border-radius:0;padding:6px;font-family:inherit;font-size:0.8rem;resize:none;margin-bottom:12px;';
+            reasonInput.style.cssText = 'box-sizing:border-box;width:100%;min-height:60px;border:2px solid black;border-radius:0;padding:6px;font-family:inherit;font-size:0.8rem;resize:none;margin-bottom:4px;';
+            const deleteNote = document.createElement('div');
+            deleteNote.style.cssText = 'font-size:0.75rem;color:#555;font-style:italic;margin-bottom:6px;';
+            deleteNote.textContent = '*Please only use this for offensive or rule breaking content';
+            const deleteErrorEl = document.createElement('div');
+            deleteErrorEl.style.cssText = 'min-height:16px;color:red;font-size:0.8rem;margin-bottom:8px;';
             const btnRow = document.createElement('div');
             btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
             const cancelBtn = document.createElement('button');
@@ -3211,6 +3220,7 @@
             confirmBtn.style.cssText = 'font-family:inherit;font-size:0.8rem;border:2px solid black;background:black;color:white;padding:4px 12px;cursor:pointer;box-shadow:2px 2px 0 black;';
             confirmBtn.onclick = () => {
                 const reason = reasonInput.value.trim();
+                if (!reason) { deleteErrorEl.textContent = 'A reason is required.'; return; }
                 document.body.removeChild(overlay);
                 onConfirm(reason);
             };
@@ -3219,6 +3229,8 @@
             body.appendChild(msg);
             body.appendChild(reasonLabel);
             body.appendChild(reasonInput);
+            body.appendChild(deleteNote);
+            body.appendChild(deleteErrorEl);
             body.appendChild(btnRow);
             box.appendChild(titleBar);
             box.appendChild(body);
@@ -3531,21 +3543,42 @@
 
             const hoursLabel = document.createElement('label');
             hoursLabel.style.cssText = 'display:block; font-weight:bold; font-size:0.8rem; margin-bottom:4px;';
-            hoursLabel.textContent = 'Hours (max 24)';
+            hoursLabel.textContent = 'Duration (0 = remove timeout)';
+            const durationRow = document.createElement('div');
+            durationRow.style.cssText = 'display:flex; gap:8px; margin-bottom:10px;';
             const hoursInput = document.createElement('input');
             hoursInput.type = 'number';
-            hoursInput.min = '0.25';
+            hoursInput.min = '0';
             hoursInput.max = '24';
             hoursInput.step = '0.25';
             hoursInput.value = '1';
-            hoursInput.style.cssText = 'box-sizing:border-box; width:100%; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; margin-bottom:10px;';
+            hoursInput.style.cssText = 'box-sizing:border-box; flex:1; min-width:0; border:2px solid black; border-radius:0; padding:6px; font-family:inherit;';
+            const unitSelect = document.createElement('select');
+            unitSelect.style.cssText = 'border:2px solid black; border-radius:0; padding:6px; font-family:inherit; background:white; cursor:pointer;';
+            unitSelect.innerHTML = '<option value="hours">Hours</option><option value="minutes">Minutes</option>';
+            unitSelect.onchange = () => {
+                if (unitSelect.value === 'minutes') {
+                    hoursInput.max = '1440';
+                    hoursInput.step = '1';
+                    hoursInput.value = Math.round(parseFloat(hoursInput.value) * 60) || 60;
+                } else {
+                    hoursInput.max = '24';
+                    hoursInput.step = '0.25';
+                    hoursInput.value = Math.round((parseFloat(hoursInput.value) / 60) * 4) / 4 || 1;
+                }
+            };
+            durationRow.appendChild(hoursInput);
+            durationRow.appendChild(unitSelect);
 
             const reasonLabel = document.createElement('label');
             reasonLabel.style.cssText = 'display:block; font-weight:bold; font-size:0.8rem; margin-bottom:4px;';
             reasonLabel.textContent = 'Reason';
             const reasonInput = document.createElement('textarea');
             reasonInput.maxLength = 200;
-            reasonInput.style.cssText = 'box-sizing:border-box; width:100%; min-height:70px; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; resize:none; margin-bottom:12px;';
+            reasonInput.style.cssText = 'box-sizing:border-box; width:100%; min-height:70px; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; resize:none; margin-bottom:4px;';
+            const timeoutNote = document.createElement('div');
+            timeoutNote.style.cssText = 'font-size:0.75rem;color:#555;font-style:italic;margin-bottom:8px;';
+            timeoutNote.textContent = '*Please only use this for users that are repeatedly breaking rules after being warned';
 
             const errorEl = document.createElement('div');
             errorEl.style.cssText = 'min-height:16px; color:red; font-size:0.8rem; margin-bottom:8px;';
@@ -3562,27 +3595,33 @@
 
             cancelBtn.onclick = () => { overlay.parentNode.removeChild(overlay); };
             okBtn.onclick = () => {
-                const hours = parseFloat(hoursInput.value);
+                const rawVal = parseFloat(hoursInput.value);
+                const isMinutes = unitSelect.value === 'minutes';
+                const hours = isMinutes ? rawVal / 60 : rawVal;
+                const displayStr = rawVal + ' ' + (isMinutes ? (rawVal === 1 ? 'minute' : 'minutes') : (rawVal === 1 ? 'hour' : 'hours'));
                 const reason = reasonInput.value.trim();
-                if (isNaN(hours) || hours <= 0 || hours > 24) {
-                    errorEl.textContent = "Timeout length must be more than 0 and no more than 24 hours.";
+                if (isNaN(rawVal) || rawVal < 0 || (isMinutes ? rawVal > 1440 : rawVal > 24)) {
+                    errorEl.textContent = isMinutes
+                        ? "Minutes must be between 0 and 1440 (0 removes the timeout)."
+                        : "Hours must be between 0 and 24 (0 removes the timeout).";
                     return;
                 }
-                if (!reason) {
+                if (hours > 0 && !reason) {
                     errorEl.textContent = "A reason is required.";
                     return;
                 }
                 overlay.parentNode.removeChild(overlay);
-                applyTimeout(uid, name, hours, reason);
+                applyTimeout(uid, name, hours, reason, displayStr);
             };
 
             btnRow.appendChild(cancelBtn);
             btnRow.appendChild(okBtn);
             body.appendChild(target);
             body.appendChild(hoursLabel);
-            body.appendChild(hoursInput);
+            body.appendChild(durationRow);
             body.appendChild(reasonLabel);
             body.appendChild(reasonInput);
+            body.appendChild(timeoutNote);
             body.appendChild(errorEl);
             body.appendChild(btnRow);
             box.appendChild(title);
@@ -3592,11 +3631,15 @@
             reasonInput.focus();
         }
 
-        function applyTimeout(uid, name, hours, reason) {
-            showConfirmModal("Time out " + (name || "this user") + " for " + hours + " hour(s)?", () => {
+        function applyTimeout(uid, name, hours, reason, displayStr) {
+            const isLift = hours === 0;
+            const confirmMsg = isLift
+                ? "Remove timeout for " + (name || "this user") + "?"
+                : "Time out " + (name || "this user") + " for " + (displayStr || hours + ' hour(s)') + "?";
+            showConfirmModal(confirmMsg, () => {
                 const logKey = db.ref('mod_actions').push().key;
                 const updates = {};
-                updates['social_timeouts/' + uid] = {
+                updates['social_timeouts/' + uid] = isLift ? null : {
                     reason: reason,
                     durationHours: hours,
                     moderatedBy: currentUser.uid,
@@ -3604,13 +3647,13 @@
                 };
                 updates['users_private/' + uid + '/timeout_seen'] = null;
                 updates['mod_actions/' + logKey] = {
-                    type: 'timeout',
+                    type: isLift ? 'timeout_lift' : 'timeout',
                     moderatorUid: currentUser.uid,
                     moderatorName: (myProfile && myProfile.displayName) || currentUser.uid,
                     targetUid: uid,
                     targetName: name || uid,
                     durationHours: hours,
-                    reason: reason,
+                    reason: isLift ? '(timeout removed)' : reason,
                     createdAt: firebase.database.ServerValue.TIMESTAMP,
                     undone: false
                 };

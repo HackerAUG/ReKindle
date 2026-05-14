@@ -1525,7 +1525,7 @@
             var newReadCount = topic.commentCount || 0;
             if (!userTopicStates[id] || userTopicStates[id].lastReadCount < newReadCount) {
                 // Update local first for snappy UI
-                if (!userTopicStates[id]) userTopicStates[id] = {};
+                if (!userTopicStates[id] || id === '__proto__' || id === 'constructor' || id === 'prototype') userTopicStates[id] = {};
                 userTopicStates[id].lastReadCount = newReadCount;
                 userTopicStates[id].lastReadTime = firebase.database.ServerValue.TIMESTAMP;
 
@@ -1797,21 +1797,42 @@
 
             var hoursLabel = document.createElement('label');
             hoursLabel.style.cssText = 'display:block; font-weight:bold; font-size:0.8rem; margin-bottom:4px;';
-            hoursLabel.textContent = 'Hours (max 24)';
+            hoursLabel.textContent = 'Duration (0 = remove timeout)';
+            var durationRow = document.createElement('div');
+            durationRow.style.cssText = 'display:flex; gap:8px; margin-bottom:10px;';
             var hoursInput = document.createElement('input');
             hoursInput.type = 'number';
-            hoursInput.min = '0.25';
+            hoursInput.min = '0';
             hoursInput.max = '24';
             hoursInput.step = '0.25';
             hoursInput.value = '1';
-            hoursInput.style.cssText = 'box-sizing:border-box; width:100%; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; margin-bottom:10px;';
+            hoursInput.style.cssText = 'box-sizing:border-box; flex:1; min-width:0; border:2px solid black; border-radius:0; padding:6px; font-family:inherit;';
+            var unitSelect = document.createElement('select');
+            unitSelect.style.cssText = 'border:2px solid black; border-radius:0; padding:6px; font-family:inherit; background:white; cursor:pointer;';
+            unitSelect.innerHTML = '<option value="hours">Hours</option><option value="minutes">Minutes</option>';
+            unitSelect.onchange = function() {
+                if (unitSelect.value === 'minutes') {
+                    hoursInput.max = '1440';
+                    hoursInput.step = '1';
+                    hoursInput.value = Math.round(parseFloat(hoursInput.value) * 60) || 60;
+                } else {
+                    hoursInput.max = '24';
+                    hoursInput.step = '0.25';
+                    hoursInput.value = Math.round((parseFloat(hoursInput.value) / 60) * 4) / 4 || 1;
+                }
+            };
+            durationRow.appendChild(hoursInput);
+            durationRow.appendChild(unitSelect);
 
             var reasonLabel = document.createElement('label');
             reasonLabel.style.cssText = 'display:block; font-weight:bold; font-size:0.8rem; margin-bottom:4px;';
             reasonLabel.textContent = 'Reason';
             var reasonInput = document.createElement('textarea');
             reasonInput.maxLength = 200;
-            reasonInput.style.cssText = 'box-sizing:border-box; width:100%; min-height:70px; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; resize:none; margin-bottom:12px;';
+            reasonInput.style.cssText = 'box-sizing:border-box; width:100%; min-height:70px; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; resize:none; margin-bottom:4px;';
+            var timeoutNote = document.createElement('div');
+            timeoutNote.style.cssText = 'font-size:0.75rem;color:#555;font-style:italic;margin-bottom:8px;';
+            timeoutNote.textContent = '*Please only use this for users that are repeatedly breaking rules after being warned';
 
             var errorEl = document.createElement('div');
             errorEl.style.cssText = 'min-height:16px; color:red; font-size:0.8rem; margin-bottom:8px;';
@@ -1828,27 +1849,33 @@
 
             cancelBtn.onclick = function () { overlay.parentNode.removeChild(overlay); };
             okBtn.onclick = function () {
-                var hours = parseFloat(hoursInput.value);
+                var rawVal = parseFloat(hoursInput.value);
+                var isMinutes = unitSelect.value === 'minutes';
+                var hours = isMinutes ? rawVal / 60 : rawVal;
+                var displayStr = rawVal + ' ' + (isMinutes ? (rawVal === 1 ? 'minute' : 'minutes') : (rawVal === 1 ? 'hour' : 'hours'));
                 var reason = reasonInput.value.replace(/^\s+|\s+$/g, '');
-                if (isNaN(hours) || hours <= 0 || hours > 24) {
-                    errorEl.textContent = "Timeout length must be more than 0 and no more than 24 hours.";
+                if (isNaN(rawVal) || rawVal < 0 || (isMinutes ? rawVal > 1440 : rawVal > 24)) {
+                    errorEl.textContent = isMinutes
+                        ? "Minutes must be between 0 and 1440 (0 removes the timeout)."
+                        : "Hours must be between 0 and 24 (0 removes the timeout).";
                     return;
                 }
-                if (!reason) {
+                if (hours > 0 && !reason) {
                     errorEl.textContent = "A reason is required.";
                     return;
                 }
                 overlay.parentNode.removeChild(overlay);
-                applyTimeout(uid, name, hours, reason);
+                applyTimeout(uid, name, hours, reason, displayStr);
             };
 
             btnRow.appendChild(cancelBtn);
             btnRow.appendChild(okBtn);
             body.appendChild(target);
             body.appendChild(hoursLabel);
-            body.appendChild(hoursInput);
+            body.appendChild(durationRow);
             body.appendChild(reasonLabel);
             body.appendChild(reasonInput);
+            body.appendChild(timeoutNote);
             body.appendChild(errorEl);
             body.appendChild(btnRow);
             box.appendChild(title);
@@ -1858,11 +1885,15 @@
             reasonInput.focus();
         }
 
-        function applyTimeout(uid, name, hours, reason) {
-            showConfirmModal("Time out " + (name || "this user") + " for " + hours + " hour(s)?", function () {
+        function applyTimeout(uid, name, hours, reason, displayStr) {
+            var isLift = hours === 0;
+            var confirmMsg = isLift
+                ? "Remove timeout for " + (name || "this user") + "?"
+                : "Time out " + (name || "this user") + " for " + (displayStr || hours + ' hour(s)') + "?";
+            showConfirmModal(confirmMsg, function () {
                 var logKey = db.ref('mod_actions').push().key;
                 var updates = {};
-                updates['social_timeouts/' + uid] = {
+                updates['social_timeouts/' + uid] = isLift ? null : {
                     reason: reason,
                     durationHours: hours,
                     moderatedBy: currentUser.uid,
@@ -1870,13 +1901,13 @@
                 };
                 updates['users_private/' + uid + '/timeout_seen'] = null;
                 updates['mod_actions/' + logKey] = {
-                    type: 'timeout',
+                    type: isLift ? 'timeout_lift' : 'timeout',
                     moderatorUid: currentUser.uid,
                     moderatorName: currentUserName || currentUser.uid,
                     targetUid: uid,
                     targetName: name || uid,
                     durationHours: hours,
-                    reason: reason,
+                    reason: isLift ? '(timeout removed)' : reason,
                     createdAt: firebase.database.ServerValue.TIMESTAMP,
                     undone: false
                 };
@@ -1991,10 +2022,10 @@
 
             msgEl.innerHTML =
                 '<div class="msg-meta">' +
-                '<b class="author-name-field" onclick="openUserProfile(\'' + msg.authorId + '\')">' + nameBadge + safeName + '</b> • <span title="' + dateHeader + '">' + timeStr + '</span> ' + delBtn +
+                '<b class="author-name-field" onclick="openUserProfile(\'' + escapeHtml(msg.authorId) + '\')">' + nameBadge + safeName + '</b> • <span title="' + dateHeader + '">' + timeStr + '</span> ' + delBtn +
                 '</div>' +
                 '<div class="msg-row">' +
-                '<canvas id="' + avatarId + '" class="msg-avatar" width="32" height="32" onclick="openUserProfile(\'' + msg.authorId + '\')"></canvas>' +
+                '<canvas id="' + avatarId + '" class="msg-avatar" width="32" height="32" onclick="openUserProfile(\'' + escapeHtml(msg.authorId) + '\')"></canvas>' +
                 '<div class="msg-bubble ' + bubbleClass + '">' + escapeHtml(displayBody) + '</div>' +
                 '</div>';
             if (prepend && historyEl.firstChild) {
@@ -2036,11 +2067,16 @@
             msg.textContent = message;
             var reasonLabel = document.createElement('label');
             reasonLabel.style.cssText = 'display:block;font-weight:bold;font-size:0.8rem;margin-bottom:4px;';
-            reasonLabel.textContent = 'Reason (optional)';
+            reasonLabel.textContent = 'Reason';
             var reasonInput = document.createElement('textarea');
             reasonInput.maxLength = 200;
             reasonInput.placeholder = 'e.g. spam, harassment…';
-            reasonInput.style.cssText = 'box-sizing:border-box;width:100%;min-height:60px;border:2px solid black;border-radius:0;padding:6px;font-family:inherit;font-size:0.8rem;resize:none;margin-bottom:12px;';
+            reasonInput.style.cssText = 'box-sizing:border-box;width:100%;min-height:60px;border:2px solid black;border-radius:0;padding:6px;font-family:inherit;font-size:0.8rem;resize:none;margin-bottom:4px;';
+            var deleteNote = document.createElement('div');
+            deleteNote.style.cssText = 'font-size:0.75rem;color:#555;font-style:italic;margin-bottom:6px;';
+            deleteNote.textContent = '*Please only use this for offensive or rule breaking content';
+            var deleteErrorEl = document.createElement('div');
+            deleteErrorEl.style.cssText = 'min-height:16px;color:red;font-size:0.8rem;margin-bottom:8px;';
             var btnRow = document.createElement('div');
             btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
             var cancelBtn = document.createElement('button');
@@ -2052,6 +2088,7 @@
             confirmBtn.style.cssText = 'font-family:inherit;font-size:0.8rem;border:2px solid black;background:black;color:white;padding:4px 12px;cursor:pointer;box-shadow:2px 2px 0 black;';
             confirmBtn.onclick = function() {
                 var reason = reasonInput.value.trim();
+                if (!reason) { deleteErrorEl.textContent = 'A reason is required.'; return; }
                 document.body.removeChild(overlay);
                 onConfirm(reason);
             };
@@ -2060,6 +2097,8 @@
             body.appendChild(msg);
             body.appendChild(reasonLabel);
             body.appendChild(reasonInput);
+            body.appendChild(deleteNote);
+            body.appendChild(deleteErrorEl);
             body.appendChild(btnRow);
             box.appendChild(titleBar);
             box.appendChild(body);
@@ -2175,7 +2214,7 @@
                             // Update local read state so own comment doesn't show as unread
                             if (result.committed && result.snapshot) {
                                 var newCount = result.snapshot.val() || 0;
-                                if (!userTopicStates[postingTopicId]) userTopicStates[postingTopicId] = {};
+                                if (!userTopicStates[postingTopicId] || postingTopicId === '__proto__' || postingTopicId === 'constructor' || postingTopicId === 'prototype') userTopicStates[postingTopicId] = {};
                                 userTopicStates[postingTopicId].lastReadCount = newCount;
                                 if (currentUser) {
                                     db.ref('users_private/' + currentUser.uid + '/topic_states/' + postingTopicId + '/lastReadCount').set(newCount);

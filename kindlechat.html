@@ -3075,7 +3075,7 @@
             if (currentUser && currentUsername === 'ukiyo') {
                 if (settings.showAdminTools) {
                     // Escape single quotes in text for the function call
-                    var safeText = msg.text ? msg.text.replace(/'/g, "\\'") : "";
+                    var safeText = msg.text ? escapeHtml(msg.text).replace(/\\/g, '\\\\\\\\').replace(/'/g, "\\'") : "";
 
                     // Reprocess Button
                     if (currentRoomId === 'general') {
@@ -3086,8 +3086,8 @@
                     adminControlsHtml += '<div class="del-btn" onclick="deleteGeneralMessage(\'' + msgId + '\')">✕</div>';
                 }
             } else if (currentUser && isCurrentUserMod && isModeratorMode && currentRoomId === 'general') {
-                var timeoutUid = (msg.uid || '').replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-                var timeoutName = (msg.user || 'this user').replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+                var timeoutUid = escapeHtml(msg.uid || '').replace(/\\/g, "\\\\\\\\").replace(/'/g, "\\'");
+                var timeoutName = escapeHtml(msg.user || 'this user').replace(/\\/g, "\\\\\\\\").replace(/'/g, "\\'");
                 if (timeoutUid && timeoutUid !== currentUser.uid) {
                     modControlsHtml += '<button style="background:black;color:white;border:none;padding:1px 6px;font-size:0.7rem;cursor:pointer;font-family:inherit;margin-left:4px;" onclick="timeOutUser(\'' + timeoutUid + '\', \'' + timeoutName + '\')">Timeout</button>';
                 }
@@ -3540,21 +3540,42 @@
 
             var hoursLabel = document.createElement('label');
             hoursLabel.style.cssText = 'display:block; font-weight:bold; font-size:0.8rem; margin-bottom:4px;';
-            hoursLabel.textContent = 'Hours (max 24)';
+            hoursLabel.textContent = 'Duration (0 = remove timeout)';
+            var durationRow = document.createElement('div');
+            durationRow.style.cssText = 'display:flex; gap:8px; margin-bottom:10px;';
             var hoursInput = document.createElement('input');
             hoursInput.type = 'number';
-            hoursInput.min = '0.25';
+            hoursInput.min = '0';
             hoursInput.max = '24';
             hoursInput.step = '0.25';
             hoursInput.value = '1';
-            hoursInput.style.cssText = 'box-sizing:border-box; width:100%; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; margin-bottom:10px;';
+            hoursInput.style.cssText = 'box-sizing:border-box; flex:1; min-width:0; border:2px solid black; border-radius:0; padding:6px; font-family:inherit;';
+            var unitSelect = document.createElement('select');
+            unitSelect.style.cssText = 'border:2px solid black; border-radius:0; padding:6px; font-family:inherit; background:white; cursor:pointer;';
+            unitSelect.innerHTML = '<option value="hours">Hours</option><option value="minutes">Minutes</option>';
+            unitSelect.onchange = function() {
+                if (unitSelect.value === 'minutes') {
+                    hoursInput.max = '1440';
+                    hoursInput.step = '1';
+                    hoursInput.value = Math.round(parseFloat(hoursInput.value) * 60) || 60;
+                } else {
+                    hoursInput.max = '24';
+                    hoursInput.step = '0.25';
+                    hoursInput.value = Math.round((parseFloat(hoursInput.value) / 60) * 4) / 4 || 1;
+                }
+            };
+            durationRow.appendChild(hoursInput);
+            durationRow.appendChild(unitSelect);
 
             var reasonLabel = document.createElement('label');
             reasonLabel.style.cssText = 'display:block; font-weight:bold; font-size:0.8rem; margin-bottom:4px;';
             reasonLabel.textContent = 'Reason';
             var reasonInput = document.createElement('textarea');
             reasonInput.maxLength = 200;
-            reasonInput.style.cssText = 'box-sizing:border-box; width:100%; min-height:70px; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; resize:none; margin-bottom:12px;';
+            reasonInput.style.cssText = 'box-sizing:border-box; width:100%; min-height:70px; border:2px solid black; border-radius:0; padding:6px; font-family:inherit; resize:none; margin-bottom:4px;';
+            var timeoutNote = document.createElement('div');
+            timeoutNote.style.cssText = 'font-size:0.75rem;color:#555;font-style:italic;margin-bottom:8px;';
+            timeoutNote.textContent = '*Please only use this for users that are repeatedly breaking rules after being warned';
 
             var errorEl = document.createElement('div');
             errorEl.style.cssText = 'min-height:16px; color:red; font-size:0.8rem; margin-bottom:8px;';
@@ -3571,27 +3592,33 @@
 
             cancelBtn.onclick = function () { overlay.parentNode.removeChild(overlay); };
             okBtn.onclick = function () {
-                var hours = parseFloat(hoursInput.value);
+                var rawVal = parseFloat(hoursInput.value);
+                var isMinutes = unitSelect.value === 'minutes';
+                var hours = isMinutes ? rawVal / 60 : rawVal;
+                var displayStr = rawVal + ' ' + (isMinutes ? (rawVal === 1 ? 'minute' : 'minutes') : (rawVal === 1 ? 'hour' : 'hours'));
                 var reason = reasonInput.value.replace(/^\s+|\s+$/g, '');
-                if (isNaN(hours) || hours <= 0 || hours > 24) {
-                    errorEl.textContent = "Timeout length must be more than 0 and no more than 24 hours.";
+                if (isNaN(rawVal) || rawVal < 0 || (isMinutes ? rawVal > 1440 : rawVal > 24)) {
+                    errorEl.textContent = isMinutes
+                        ? "Minutes must be between 0 and 1440 (0 removes the timeout)."
+                        : "Hours must be between 0 and 24 (0 removes the timeout).";
                     return;
                 }
-                if (!reason) {
+                if (hours > 0 && !reason) {
                     errorEl.textContent = "A reason is required.";
                     return;
                 }
                 overlay.parentNode.removeChild(overlay);
-                applyTimeout(uid, name, hours, reason);
+                applyTimeout(uid, name, hours, reason, displayStr);
             };
 
             btnRow.appendChild(cancelBtn);
             btnRow.appendChild(okBtn);
             body.appendChild(target);
             body.appendChild(hoursLabel);
-            body.appendChild(hoursInput);
+            body.appendChild(durationRow);
             body.appendChild(reasonLabel);
             body.appendChild(reasonInput);
+            body.appendChild(timeoutNote);
             body.appendChild(errorEl);
             body.appendChild(btnRow);
             box.appendChild(title);
@@ -3601,11 +3628,15 @@
             reasonInput.focus();
         }
 
-        function applyTimeout(uid, name, hours, reason) {
-            showConfirmModal("Time out " + (name || "this user") + " for " + hours + " hour(s)?", function () {
+        function applyTimeout(uid, name, hours, reason, displayStr) {
+            var isLift = hours === 0;
+            var confirmMsg = isLift
+                ? "Remove timeout for " + (name || "this user") + "?"
+                : "Time out " + (name || "this user") + " for " + (displayStr || hours + ' hour(s)') + "?";
+            showConfirmModal(confirmMsg, function () {
                 var logKey = rtdb.ref('mod_actions').push().key;
                 var updates = {};
-                updates['social_timeouts/' + uid] = {
+                updates['social_timeouts/' + uid] = isLift ? null : {
                     reason: reason,
                     durationHours: hours,
                     moderatedBy: currentUser.uid,
@@ -3613,13 +3644,13 @@
                 };
                 updates['users_private/' + uid + '/timeout_seen'] = null;
                 updates['mod_actions/' + logKey] = {
-                    type: 'timeout',
+                    type: isLift ? 'timeout_lift' : 'timeout',
                     moderatorUid: currentUser.uid,
                     moderatorName: currentUsername || currentUser.uid,
                     targetUid: uid,
                     targetName: name || uid,
                     durationHours: hours,
-                    reason: reason,
+                    reason: isLift ? '(timeout removed)' : reason,
                     createdAt: firebase.database.ServerValue.TIMESTAMP,
                     undone: false
                 };
@@ -3647,11 +3678,16 @@
             msg.textContent = message;
             var reasonLabel = document.createElement('label');
             reasonLabel.style.cssText = 'display:block;font-weight:bold;font-size:0.8rem;margin-bottom:4px;';
-            reasonLabel.textContent = 'Reason (optional)';
+            reasonLabel.textContent = 'Reason';
             var reasonInput = document.createElement('textarea');
             reasonInput.maxLength = 200;
             reasonInput.placeholder = 'e.g. spam, harassment…';
-            reasonInput.style.cssText = 'box-sizing:border-box;width:100%;min-height:60px;border:2px solid black;border-radius:0;padding:6px;font-family:inherit;font-size:0.8rem;resize:none;margin-bottom:12px;';
+            reasonInput.style.cssText = 'box-sizing:border-box;width:100%;min-height:60px;border:2px solid black;border-radius:0;padding:6px;font-family:inherit;font-size:0.8rem;resize:none;margin-bottom:4px;';
+            var deleteNote = document.createElement('div');
+            deleteNote.style.cssText = 'font-size:0.75rem;color:#555;font-style:italic;margin-bottom:6px;';
+            deleteNote.textContent = '*Please only use this for offensive or rule breaking content';
+            var deleteErrorEl = document.createElement('div');
+            deleteErrorEl.style.cssText = 'min-height:16px;color:red;font-size:0.8rem;margin-bottom:8px;';
             var btnRow = document.createElement('div');
             btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
             var cancelBtn = document.createElement('button');
@@ -3663,6 +3699,7 @@
             confirmBtn.style.cssText = 'font-family:inherit;font-size:0.8rem;border:2px solid black;background:black;color:white;padding:4px 12px;cursor:pointer;box-shadow:2px 2px 0 black;';
             confirmBtn.onclick = function() {
                 var reason = reasonInput.value.trim();
+                if (!reason) { deleteErrorEl.textContent = 'A reason is required.'; return; }
                 document.body.removeChild(overlay);
                 onConfirm(reason);
             };
@@ -3671,6 +3708,8 @@
             body.appendChild(msg);
             body.appendChild(reasonLabel);
             body.appendChild(reasonInput);
+            body.appendChild(deleteNote);
+            body.appendChild(deleteErrorEl);
             body.appendChild(btnRow);
             box.appendChild(titleBar);
             box.appendChild(body);
@@ -4067,12 +4106,14 @@
             if (currentState === 'translated') {
                 // Switch to Original
                 // Need to re-apply linkify AND tagify
-                bubble.innerHTML = tagify(linkify(originalText), msgId);
+                var safeOriginal = escapeHtml(originalText);
+                bubble.innerHTML = tagify(linkify(safeOriginal), msgId);
                 bubble.setAttribute('data-state', 'original');
                 toggleBtn.textContent = "Show Translated";
             } else {
                 // Switch back to Translated
-                bubble.innerHTML = tagify(linkify(translatedText), msgId);
+                var safeTranslated = escapeHtml(translatedText);
+                bubble.innerHTML = tagify(linkify(safeTranslated), msgId);
                 bubble.setAttribute('data-state', 'translated');
                 toggleBtn.textContent = "Show Original";
             }
@@ -4527,7 +4568,7 @@
         function showConfirm(msg, onOk, onCancel) {
             var d = document.createElement('div');
             d.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
-            d.innerHTML = '<div style="background:white;border:2px solid black;box-shadow:4px 4px 0 black;padding:20px;max-width:320px;font-family:sans-serif;text-align:center;"><p style="margin-bottom:16px;">' + msg + '</p><div><button id="sc-ok" style="border:2px solid black;box-shadow:2px 2px 0 black;padding:6px 16px;background:black;color:white;font-weight:bold;cursor:pointer;margin-right:10px;">OK</button><button id="sc-cancel" style="border:2px solid black;box-shadow:2px 2px 0 black;padding:6px 16px;background:white;font-weight:bold;cursor:pointer;">Cancel</button></div></div>';
+            d.innerHTML = '<div style="background:white;border:2px solid black;box-shadow:4px 4px 0 black;padding:20px;max-width:320px;font-family:sans-serif;text-align:center;"><p style="margin-bottom:16px;">' + escapeHtml(msg) + '</p><div><button id="sc-ok" style="border:2px solid black;box-shadow:2px 2px 0 black;padding:6px 16px;background:black;color:white;font-weight:bold;cursor:pointer;margin-right:10px;">OK</button><button id="sc-cancel" style="border:2px solid black;box-shadow:2px 2px 0 black;padding:6px 16px;background:white;font-weight:bold;cursor:pointer;">Cancel</button></div></div>';
             document.body.appendChild(d);
             d.querySelector('#sc-ok').onclick = function() { d.remove(); if (onOk) onOk(); };
             d.querySelector('#sc-cancel').onclick = function() { d.remove(); if (onCancel) onCancel(); };
