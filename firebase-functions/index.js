@@ -31,6 +31,23 @@ const callOptions = {
     maxInstances: 10       // Limit concurrency for IMAP connections to avoid hitting limits
 };
 
+async function logModAction(type, targetUid, targetName, reason, extra = {}) {
+    const logKey = admin.database().ref('mod_actions').push().key;
+    const entry = {
+        type,
+        moderatorUid: 'system',
+        moderatorName: 'System (Auto)',
+        targetUid,
+        targetName: targetName || targetUid,
+        reason,
+        createdAt: admin.database.ServerValue.TIMESTAMP,
+        undone: false,
+        systemAction: true,
+        ...extra
+    };
+    await admin.database().ref(`mod_actions/${logKey}`).set(entry);
+}
+
 /*
  * IMAP Auth & List
  * Expects data: { 
@@ -413,6 +430,7 @@ exports.registerUser = onCall(callOptions, async (request) => {
         const snap = await admin.database().ref(`banned_ips/${safeIp}`).once('value');
         if (snap.exists()) {
             logger.warn(`Blocked registration from banned IP: ${ip} (username attempt: ${username})`);
+            await logModAction('ip_ban_registration', '', username, `Blocked registration from banned IP: ${ip}`);
             throw new HttpsError('permission-denied', 'Registration is not available from your network.');
         }
     }
@@ -446,6 +464,7 @@ exports.registerUser = onCall(callOptions, async (request) => {
         if (snap.exists()) {
             logger.warn(`Banned IP registered (race) — disabling account: ${ip} (uid: ${userRecord.uid})`);
             await admin.auth().updateUser(userRecord.uid, { disabled: true });
+            await logModAction('ip_ban_login', userRecord.uid, username, `Account disabled after registration from banned IP: ${ip}`);
             throw new HttpsError('permission-denied', 'Registration is not available from your network.');
         }
     }
@@ -540,6 +559,7 @@ exports.checkIPOnLogin = onCall(callOptions, async (request) => {
             logger.warn(`Banned IP signed in — disabling account and revoking session: ${ip} (uid: ${uid})`);
             await admin.auth().updateUser(uid, { disabled: true });
             await admin.auth().revokeRefreshTokens(uid);
+            await logModAction('ip_ban_login', uid, uid, `Account disabled on login from banned IP: ${ip}`);
             return { banned: true };
         }
         // Keep stored IP current so ban-by-IP lookups stay accurate

@@ -61,13 +61,39 @@
         showBanMessage(title, message) {
             if (typeof showGenericModal === 'function') {
                 showGenericModal(title, message);
-            } else if (typeof showAlertModal === 'function') {
-                showAlertModal(message, title);
-            } else if (typeof alert === 'function') {
-                alert(title + '\n\n' + message);
-            } else {
-                console.error(title + ': ' + message);
+                return;
             }
+            if (typeof showAlertModal === 'function') {
+                showAlertModal(message, title);
+                return;
+            }
+
+            // Self-contained fallback modal — never use alert()
+            var modalId = 'ip-ban-fallback-modal';
+            var modal = document.getElementById(modalId);
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = modalId;
+                modal.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:99999;align-items:center;justify-content:center;font-family:sans-serif;';
+                modal.innerHTML =
+                    '<div id="' + modalId + '-box" style="background:#fff;border:2px solid #000;padding:24px;width:320px;max-width:85%;text-align:center;box-shadow:4px 4px 0 #000;">' +
+                    '  <h3 id="' + modalId + '-title" style="margin-top:0;border-bottom:2px solid #000;padding-bottom:10px;font-size:1.1em;"></h3>' +
+                    '  <p id="' + modalId + '-msg" style="margin:16px 0;font-size:0.95em;line-height:1.4;"></p>' +
+                    '  <button id="' + modalId + '-btn" style="background:#fff;border:2px solid #000;padding:8px 20px;font-weight:bold;cursor:pointer;box-shadow:2px 2px 0 #000;font-size:0.9em;">OK</button>' +
+                    '</div>';
+                document.body.appendChild(modal);
+
+                var box = document.getElementById(modalId + '-box');
+                document.getElementById(modalId + '-btn').onclick = function () {
+                    modal.style.display = 'none';
+                };
+                modal.onclick = function (e) {
+                    if (e.target === modal) modal.style.display = 'none';
+                };
+            }
+            document.getElementById(modalId + '-title').textContent = title;
+            document.getElementById(modalId + '-msg').textContent = message;
+            modal.style.display = 'flex';
         }
     };
 })();

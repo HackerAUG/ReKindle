@@ -1753,12 +1753,15 @@
         'delete_topic_comment':       'Deleted Topic Comment',
         'delete_neighbourhood_post':  'Deleted NB Post',
         'delete_neighbourhood_comment': 'Deleted NB Comment',
-        'timeout':                    'Timeout'
+        'timeout':                    'Timeout',
+        'ip_ban_registration':        'IP Ban — Reg Block',
+        'ip_ban_login':               'IP Ban — Account Disable'
     };
 
     function modActionBadge(type, undone) {
         if (undone) return '<span class="badge badge-undone">UNDONE</span>';
         if (type === 'timeout') return '<span class="badge badge-timeout-mod">TIMEOUT</span>';
+        if (type.startsWith('ip_ban')) return '<span class="badge badge-timeout-mod">IP BAN</span>';
         return '<span class="badge badge-delete">DELETED</span>';
     }
 
@@ -1766,12 +1769,12 @@
         var lines = [];
         if (entry.type === 'timeout') {
             lines.push('Duration: ' + (entry.durationHours || '?') + 'h');
-            if (entry.reason) lines.push('Reason: ' + entry.reason);
-        } else if (entry.savedData) {
+        }
+        if (entry.reason) lines.push('Reason: ' + entry.reason);
+        if (entry.savedData) {
             var d = entry.savedData;
             var text = d.text || d.body || d.message || '';
             if (text) lines.push(text.substring(0, 200) + (text.length > 200 ? '…' : ''));
-            if (entry.reason) lines.push('Reason: ' + entry.reason);
         }
         return lines.join('\n');
     }
@@ -1824,7 +1827,7 @@
                     + '<span>-&gt; <strong>' + escapeHtml(targetName) + '</strong></span>'
                     + (entry.undone
                         ? '<span style="color:#888;font-size:10px;">Undone ' + formatDate(entry.undoneAt) + ' by ' + escapeHtml(uidNameCache[entry.undoneBy] || entry.undoneBy || 'admin') + (entry.undoneNote ? ' — ' + escapeHtml(entry.undoneNote) : '') + '</span>'
-                        : (isAdmin || (currentUser && entry.moderatorUid === currentUser.uid)
+                        : (entry.moderatorUid !== 'system' && (isAdmin || (currentUser && entry.moderatorUid === currentUser.uid))
                             ? '<button class="undo-btn" id="undo-' + key + '" onclick="undoModAction(\'' + key + '\', this)">Undo</button>'
                             : ''))
                     + '</div>'
