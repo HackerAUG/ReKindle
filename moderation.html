@@ -812,6 +812,7 @@
                 <div class="admin-section-title">Firebase Account Status</div>
                 <div class="admin-action-row">
                     <span id="admin-firebase-label" style="font-size:12px;font-family:'Courier New',monospace;">Account: —</span>
+                    <button id="admin-firebase-toggle-btn" style="display:none;" onclick="adminToggleFirebaseStatus()">Disable Account</button>
                 </div>
             </div>
 
@@ -1141,7 +1142,7 @@
 
     function getBanUsernameForUser(user) {
         if (!user) return '';
-        return user.displayName || user.emailHandle || (user.email ? user.email.split('@')[0] : '') || user.uid || '';
+        return user.emailHandle || (user.email ? user.email.split('@')[0] : '') || user.displayName || user.uid || '';
     }
 
     function buildBannedUserEntry(user, addedBy, addedAt) {
@@ -1320,7 +1321,7 @@
         try {
             var snap = await rtdb.ref('users_public/' + uid).once('value');
             var data = snap.val();
-            var name = (data && (data.displayName || data.email)) ? (data.displayName || data.email.split('@')[0]) : uid.substring(0, 8);
+            var name = (data && data.email) ? data.email.split('@')[0] : (data && data.displayName) ? data.displayName : uid.substring(0, 8);
             uidNameCache[uid] = name;
             return name;
         } catch (e) {
@@ -1386,9 +1387,9 @@
 
         var rangeLabel = document.getElementById('time-range').options[document.getElementById('time-range').selectedIndex].text;
 
-        lines.push('=== REKINDLE MODERATION REPORT' + (filterUser ? ' — USER: ' + filterUser.displayName : '') + ' ===');
+        lines.push('=== REKINDLE MODERATION REPORT' + (filterUser ? ' — USER: ' + filterUser.emailHandle : '') + ' ===');
         lines.push('Period: ' + rangeLabel + ' (from ' + formatDateLong(cutoff) + ')');
-        if (filterUser) lines.push('Filtered to user: ' + filterUser.displayName + ' (UID: ' + filterUser.uid + ')');
+        if (filterUser) lines.push('Filtered to user: ' + filterUser.emailHandle + ' (UID: ' + filterUser.uid + ')');
         lines.push('Generated: ' + formatDateLong(Date.now()));
         lines.push('');
 
@@ -1527,7 +1528,7 @@
                             var cm = c.val();
                             if (cm && cm.timestamp >= cutoff) {
                                 if (filterUser && cm.authorId !== filterUser.uid) return;
-                                commentsData.push({ ts: cm.timestamp, author: cm.authorName || '?', body: cm.body || '' });
+                                commentsData.push({ ts: cm.timestamp, authorId: cm.authorId || '', body: cm.body || '' });
                             }
                         });
                         commentsData.sort(function(a,b){ return a.ts - b.ts; });
@@ -1539,7 +1540,8 @@
 
                     topicCount++;
                     lines.push('');
-                    lines.push('TOPIC: "' + topic.title + '" by ' + topic.authorName + ' [' + formatDate(topic.timestamp) + ']');
+                    var topicAuthorName = await resolveUid(topic.authorId);
+                    lines.push('TOPIC: "' + topic.title + '" by ' + topicAuthorName + ' [' + formatDate(topic.timestamp) + ']');
                     if (topic.subheading) {
                         lines.push('  Subheading: ' + topic.subheading);
                     }
@@ -1551,9 +1553,11 @@
                         if (commentsData.length === 0) {
                             lines.push('  (no new comments in this period)');
                         } else {
-                            commentsData.forEach(function(cm) {
-                                lines.push('  [' + formatDate(cm.ts) + '] ' + cm.author + ': ' + cm.body);
-                            });
+                            for (var cmi = 0; cmi < commentsData.length; cmi++) {
+                                var cm = commentsData[cmi];
+                                var commentAuthorName = await resolveUid(cm.authorId);
+                                lines.push('  [' + formatDate(cm.ts) + '] ' + commentAuthorName + ': ' + cm.body);
+                            }
                         }
                     }
                 }
@@ -2260,7 +2264,7 @@
 
         document.getElementById('admin-user-info').innerHTML =
             '<div class="admin-user-detail">'
-            + '<strong>' + escapeHtml(u.displayName || u.uid) + '</strong>'
+            + '<strong>' + escapeHtml(u.emailHandle || u.uid) + '</strong>'
             + ' <span class="admin-uid-label">' + escapeHtml(u.email || '(no email)') + ' &nbsp;|&nbsp; UID: ' + escapeHtml(u.uid) + (u.stripeCustomerId ? ' &nbsp;|&nbsp; Stripe: ' + escapeHtml(u.stripeCustomerId) : '') + '</span>'
             + '</div>'
             + '<div class="admin-user-badges">'
@@ -2275,6 +2279,15 @@
         firebaseEl.textContent = 'Account: ' + firebaseLabel;
         firebaseEl.style.color = u.authStatusError ? '#888' : (u.isFirebaseDisabled ? '#c00' : '#080');
 
+        var firebaseBtn = document.getElementById('admin-firebase-toggle-btn');
+        if (u.authStatusError) {
+            firebaseBtn.style.display = 'none';
+        } else {
+            firebaseBtn.style.display = '';
+            firebaseBtn.textContent = u.isFirebaseDisabled ? 'Enable Account' : 'Disable Account';
+            firebaseBtn.className = u.isFirebaseDisabled ? 'btn-primary' : 'btn-delete';
+        }
+
         var ipEl = document.getElementById('admin-ip-label');
         ipEl.textContent = 'IP: ' + ipLabel;
         ipEl.style.color = u.ip ? (u.isIpBanned ? '#900' : '#080') : '';
@@ -2284,11 +2297,36 @@
         adminCleanupTasks = [];
     }
 
+    async function adminToggleFirebaseStatus() {
+        var u = adminTargetUser;
+        if (!u) return;
+        if (u.authStatusError) { setAdminStatus('Cannot toggle: auth status unknown.', true); return; }
+
+        var newDisabled = !u.isFirebaseDisabled;
+        var actionLabel = newDisabled ? 'disable' : 'enable';
+        if (!await showConfirm((newDisabled ? 'Disable' : 'Enable') + ' Firebase account for ' + escapeHtml(u.emailHandle || u.uid) + '?\n\n' + (newDisabled ? 'This will prevent the user from signing in.' : 'This will allow the user to sign in again.'))) return;
+
+        setAdminStatus((newDisabled ? 'Disabling' : 'Enabling') + ' account...');
+        try {
+            var result = await firebase.functions().httpsCallable('setUserAuthStatus')({ uid: u.uid, disabled: newDisabled });
+            if (result.data && result.data.success) {
+                adminTargetUser.isFirebaseDisabled = newDisabled;
+                renderAdminUserInfo();
+                setAdminStatus('Account ' + (newDisabled ? 'disabled' : 'enabled') + ' for ' + escapeHtml(u.emailHandle || u.uid) + '.');
+            } else {
+                throw new Error('Unexpected response');
+            }
+        } catch (err) {
+            console.error(err);
+            setAdminStatus('Error toggling account status: ' + (err.message || err), true);
+        }
+    }
+
     async function adminBanIp() {
         var u = adminTargetUser;
         if (!u) return;
         if (!u.ip) { setAdminStatus('No IP on record for this user.', true); return; }
-        if (!await showConfirm('Ban IP ' + u.ip + ' for user ' + escapeHtml(u.displayName || u.uid) + '?\n\nThis blocks all new logins from this IP address.')) return;
+        if (!await showConfirm('Ban IP ' + u.ip + ' for user ' + escapeHtml(u.emailHandle || u.uid) + '?\n\nThis blocks all new logins from this IP address.')) return;
 
         setAdminStatus('Banning IP...');
         try {
@@ -2343,7 +2381,7 @@
             if (type === 'years')  expiresAt.setFullYear(expiresAt.getFullYear() + amount);
         }
 
-        if (!await showConfirm('Grant Pro to ' + escapeHtml(u.displayName || u.uid) + '?\n\nExpires: ' + expiresAt.toDateString() + '\n\nNote: auth custom claim requires the user to sign out and back in.')) return;
+        if (!await showConfirm('Grant Pro to ' + escapeHtml(u.emailHandle || u.uid) + '?\n\nExpires: ' + expiresAt.toDateString() + '\n\nNote: auth custom claim requires the user to sign out and back in.')) return;
 
         setAdminStatus('Granting Pro...');
         try {
@@ -2362,7 +2400,7 @@
             adminTargetUser.proExpiresAt = expiresAt;
             adminTargetUser.subscriptionType = subscriptionType;
             renderAdminUserInfo();
-            setAdminStatus('Pro granted to ' + escapeHtml(u.displayName || u.uid) + ' until ' + formatDate(expiresAt.getTime()) + '. User must re-login for claim to take effect.');
+            setAdminStatus('Pro granted to ' + escapeHtml(u.emailHandle || u.uid) + ' until ' + formatDate(expiresAt.getTime()) + '. User must re-login for claim to take effect.');
         } catch (err) {
             console.error(err);
             setAdminStatus('Error granting Pro: ' + (err.message || err), true);
@@ -2372,7 +2410,7 @@
     async function adminRevokePro() {
         var u = adminTargetUser;
         if (!u) return;
-        if (!await showConfirm('Revoke Pro from ' + escapeHtml(u.displayName || u.uid) + '?')) return;
+        if (!await showConfirm('Revoke Pro from ' + escapeHtml(u.emailHandle || u.uid) + '?')) return;
 
         setAdminStatus('Revoking Pro...');
         try {
@@ -2390,7 +2428,7 @@
             adminTargetUser.isPro = false;
             adminTargetUser.proExpiresAt = null;
             renderAdminUserInfo();
-            setAdminStatus('Pro revoked from ' + escapeHtml(u.displayName || u.uid) + '. User must re-login for claim to take effect.');
+            setAdminStatus('Pro revoked from ' + escapeHtml(u.emailHandle || u.uid) + '. User must re-login for claim to take effect.');
         } catch (err) {
             console.error(err);
             setAdminStatus('Error revoking Pro: ' + (err.message || err), true);
@@ -2400,7 +2438,7 @@
     async function adminGrantModerator() {
         var u = adminTargetUser;
         if (!u) return;
-        if (!await showConfirm('Grant Moderator to ' + escapeHtml(u.displayName || u.uid) + '?')) return;
+        if (!await showConfirm('Grant Moderator to ' + escapeHtml(u.emailHandle || u.uid) + '?')) return;
 
         setAdminStatus('Granting Moderator...');
         try {
@@ -2408,7 +2446,7 @@
             await firestore.collection('config').doc('moderators').set({ [u.uid]: true }, { merge: true });
             adminTargetUser.isMod = true;
             renderAdminUserInfo();
-            setAdminStatus('Moderator granted to ' + escapeHtml(u.displayName || u.uid) + '.');
+            setAdminStatus('Moderator granted to ' + escapeHtml(u.emailHandle || u.uid) + '.');
         } catch (err) {
             console.error(err);
             setAdminStatus('Error granting Moderator: ' + (err.message || err), true);
@@ -2418,7 +2456,7 @@
     async function adminRevokeModerator() {
         var u = adminTargetUser;
         if (!u) return;
-        if (!await showConfirm('Revoke Moderator from ' + escapeHtml(u.displayName || u.uid) + '?')) return;
+        if (!await showConfirm('Revoke Moderator from ' + escapeHtml(u.emailHandle || u.uid) + '?')) return;
 
         setAdminStatus('Revoking Moderator...');
         try {
@@ -2429,7 +2467,7 @@
             );
             adminTargetUser.isMod = false;
             renderAdminUserInfo();
-            setAdminStatus('Moderator revoked from ' + escapeHtml(u.displayName || u.uid) + '.');
+            setAdminStatus('Moderator revoked from ' + escapeHtml(u.emailHandle || u.uid) + '.');
         } catch (err) {
             console.error(err);
             setAdminStatus('Error revoking Moderator: ' + (err.message || err), true);
@@ -2450,7 +2488,7 @@
         var hours = unit === 'minutes' ? amount / 60 : amount;
         var humanDuration = amount + ' ' + unit;
 
-        if (!await showConfirm('Timeout ' + escapeHtml(u.displayName || u.uid) + ' for ' + humanDuration + '?\nReason: ' + reason)) return;
+        if (!await showConfirm('Timeout ' + escapeHtml(u.emailHandle || u.uid) + ' for ' + humanDuration + '?\nReason: ' + reason)) return;
 
         setAdminStatus('Setting timeout...');
         try {
@@ -2466,9 +2504,9 @@
             updates['mod_actions/' + logKey] = {
                 type: 'timeout',
                 moderatorUid: currentUser.uid,
-                moderatorName: currentUser.displayName || currentUser.email || currentUser.uid,
+                moderatorName: (currentUser.email ? currentUser.email.split('@')[0] : '') || currentUser.displayName || currentUser.uid,
                 targetUid: u.uid,
-                targetName: u.displayName || u.uid,
+                targetName: u.emailHandle || u.uid,
                 durationHours: hours,
                 reason: reason,
                 createdAt: firebase.database.ServerValue.TIMESTAMP,
@@ -2477,7 +2515,7 @@
             await rtdb.ref().update(updates);
             adminTargetUser.timeoutData = { reason: reason, durationHours: hours, moderatedBy: currentUser.uid };
             renderAdminUserInfo();
-            setAdminStatus('Timeout set: ' + escapeHtml(u.displayName || u.uid) + ' for ' + humanDuration + '.');
+            setAdminStatus('Timeout set: ' + escapeHtml(u.emailHandle || u.uid) + ' for ' + humanDuration + '.');
             fetchActiveTimeouts();
         } catch (err) {
             console.error(err);
@@ -2489,7 +2527,7 @@
         var u = adminTargetUser;
         if (!u) return;
         if (!u.timeoutData) { setAdminStatus('No active timeout for this user.'); return; }
-        if (!await showConfirm('Clear timeout for ' + escapeHtml(u.displayName || u.uid) + '?')) return;
+        if (!await showConfirm('Clear timeout for ' + escapeHtml(u.emailHandle || u.uid) + '?')) return;
 
         setAdminStatus('Clearing timeout...');
         try {
@@ -2500,9 +2538,9 @@
             updates['mod_actions/' + logKey] = {
                 type: 'timeout_lift',
                 moderatorUid: currentUser.uid,
-                moderatorName: currentUser.displayName || currentUser.email || currentUser.uid,
+                moderatorName: (currentUser.email ? currentUser.email.split('@')[0] : '') || currentUser.displayName || currentUser.uid,
                 targetUid: u.uid,
-                targetName: u.displayName || u.uid,
+                targetName: u.emailHandle || u.uid,
                 durationHours: 0,
                 reason: '(timeout removed)',
                 createdAt: firebase.database.ServerValue.TIMESTAMP,
@@ -2511,7 +2549,7 @@
             await rtdb.ref().update(updates);
             adminTargetUser.timeoutData = null;
             renderAdminUserInfo();
-            setAdminStatus('Timeout cleared for ' + escapeHtml(u.displayName || u.uid) + '.');
+            setAdminStatus('Timeout cleared for ' + escapeHtml(u.emailHandle || u.uid) + '.');
             fetchActiveTimeouts();
         } catch (err) {
             console.error(err);
@@ -2529,7 +2567,7 @@
         }
 
         if (!dryRun) {
-            if (!await showConfirm('Delete ' + adminCleanupTasks.length + ' item(s) from ' + escapeHtml(u.displayName || u.uid) + '?\n\nThis cannot be undone.')) return;
+            if (!await showConfirm('Delete ' + adminCleanupTasks.length + ' item(s) from ' + escapeHtml(u.emailHandle || u.uid) + '?\n\nThis cannot be undone.')) return;
             if (!await showConfirm('Final confirmation — permanently delete all messages from this user?')) return;
         }
 
@@ -2545,7 +2583,7 @@
         }
 
         setAdminStatus(dryRun ? 'Scanning...' : 'Deleting...');
-        log('=== ' + (dryRun ? 'DRY RUN SCAN' : 'DELETE') + ' — ' + (u.displayName || u.uid) + ' ===');
+        log('=== ' + (dryRun ? 'DRY RUN SCAN' : 'DELETE') + ' — ' + (u.emailHandle || u.uid) + ' ===');
         log('UID: ' + u.uid);
         log('Email handle: ' + (u.emailHandle || '(none)'));
         log('');

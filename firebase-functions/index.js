@@ -483,6 +483,34 @@ exports.getUserAuthStatus = onCall(callOptions, async (request) => {
     }
 });
 
+exports.setUserAuthStatus = onCall(callOptions, async (request) => {
+    if (!request.auth) {
+        throw new HttpsError('unauthenticated', 'Must be signed in.');
+    }
+    const { uid, disabled } = request.data;
+    if (!uid || typeof disabled !== 'boolean') {
+        throw new HttpsError('invalid-argument', 'Missing uid or disabled flag.');
+    }
+
+    const callerUid = request.auth.uid;
+    const callerRecord = await admin.auth().getUser(callerUid);
+    const isAdmin = callerRecord.email === 'ukiyo@rekindle.ink';
+    if (!isAdmin) {
+        throw new HttpsError('permission-denied', 'Admin access required.');
+    }
+
+    try {
+        await admin.auth().updateUser(uid, { disabled });
+        return { success: true, disabled };
+    } catch (e) {
+        if (e.code === 'auth/user-not-found') {
+            throw new HttpsError('not-found', 'User not found.');
+        }
+        logger.error('setUserAuthStatus error:', e);
+        throw new HttpsError('internal', 'Failed to update user auth status: ' + e.message);
+    }
+});
+
 exports.checkIPOnLogin = onCall(callOptions, async (request) => {
     if (!request.auth) {
         throw new HttpsError('unauthenticated', 'Must be signed in to call this function.');
