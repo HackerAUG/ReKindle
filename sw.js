@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rekindle-cache-v17'; // Bumped version to force update
+const CACHE_NAME = 'rekindle-cache-v18'; // Bumped version to force update
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -78,7 +78,10 @@ self.addEventListener('fetch', event => {
 
     // 2. JS/Images/Assets -> Stale-While-Revalidate
     // 2. Local Assets (JS/CSS/SVG) -> Stale-While-Revalidate
-    if (ASSETS_TO_CACHE.some(asset => url.pathname.endsWith(asset.replace('./', '')))) {
+    if (ASSETS_TO_CACHE.some(asset => {
+        const path = asset.replace('./', '');
+        return path && url.pathname.endsWith(path);
+    })) {
         event.respondWith(
             caches.open(CACHE_NAME).then(cache => {
                 return cache.match(event.request).then(response => {
