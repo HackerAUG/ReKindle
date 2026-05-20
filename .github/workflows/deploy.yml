@@ -31,7 +31,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: rekindle  # YOUR EXISTING PROJECT
+          projectName: rerekindle  # YOUR EXISTING PROJECT
           directory: _deploy/main
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           wranglerVersion: '3'
@@ -42,7 +42,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: rekindle-lite # NEW PROJECT
+          projectName: rerekindle-lite # NEW PROJECT
           directory: _deploy/lite
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           wranglerVersion: '3'
@@ -53,7 +53,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: rekindle-legacy # NEW PROJECT
+          projectName: rerekindle-legacy # NEW PROJECT
           directory: _deploy/legacy
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           wranglerVersion: '3'
